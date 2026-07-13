@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 type DomainMode = "continuous" | "discrete";
 type ToolMode = "transform" | "convolution";
 type TransformKind = "fourier" | "laplace" | "z";
 type Preset = "sine" | "gaussian" | "rect" | "chirp" | "decay";
 
-const SAMPLE_COUNT = 128;
 const WIDTH = 620;
 const HEIGHT = 300;
 const PAD = { left: 48, right: 20, top: 24, bottom: 38 };
@@ -28,13 +27,20 @@ const presetExpressions: Record<Preset, string> = {
   decay: "exp(-abs(t))",
 };
 
+function expressionForPreset(preset: Preset, mode: DomainMode) {
+  if (mode === "continuous") return presetExpressions[preset];
+  const discreteExpressions: Record<Preset, string> = {
+    sine: "sin(2*pi*0.125*n)",
+    gaussian: "exp(-0.001*n*n)",
+    rect: "rect(n/24)",
+    chirp: "sin(2*pi*0.003*n*n)",
+    decay: "exp(-abs(n)/20)",
+  };
+  return discreteExpressions[preset];
+}
+
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
-
-const asNumber = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
 
 function presetFunction(preset: Preset) {
   switch (preset) {
@@ -51,57 +57,65 @@ function presetFunction(preset: Preset) {
   }
 }
 
-function parseExpression(expression: string, fallback: Preset) {
+type CompiledExpression = { fn: (x: number) => number; error: string | null };
+
+function parseExpression(expression: string, fallback: Preset): CompiledExpression {
   const value = expression
     .toLowerCase()
     .replaceAll("π", "pi")
     .replace(/[·×]/g, "*")
-    .replaceAll(" ", "");
+    .replaceAll("math.", "")
+    .replaceAll(" ", "")
+    .replaceAll("ln", "log")
+    .replaceAll("sign", "sgn")
+    .replaceAll("mod", "rem")
+    .replaceAll("^", "**");
 
-  const trig = value.match(
-    /^(sin|cos)\(2\*pi\*?([0-9.]+)?\*?[tn](?:\+([0-9.]+))?\)$/,
-  );
-  if (trig) {
-    const frequency = asNumber(trig[2], 1);
-    const phase = asNumber(trig[3], 0);
-    return (x: number) =>
-      trig[1] === "sin"
-        ? Math.sin(2 * Math.PI * frequency * x + phase)
-        : Math.cos(2 * Math.PI * frequency * x + phase);
+  const fallbackResult = (error: string): CompiledExpression => ({ fn: presetFunction(fallback), error });
+  if (!value) return fallbackResult("请输入函数表达式");
+  if (!/^[0-9a-z_+\-*/%^().,?:<>=!&|]+$/i.test(value)) {
+    return fallbackResult("表达式包含不支持的字符");
   }
 
-  const gaussian = value.match(/^exp\(-([0-9.]+)?\*?[tn]\*?[tn]\)$/);
-  if (gaussian) {
-    const width = asNumber(gaussian[1], 1);
-    return (x: number) => Math.exp(-width * x * x);
+  const allowedNames = new Set([
+    "t", "n", "pi", "e", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+    "exp", "log", "sqrt", "abs", "floor", "ceil", "round", "min", "max", "pow", "rect", "sinc",
+    "step", "sgn", "rem",
+  ]);
+  const names = value.match(/[a-z_][a-z0-9_]*/gi) ?? [];
+  if (names.some((name) => !allowedNames.has(name))) {
+    return fallbackResult("检测到不支持的函数或变量");
   }
 
-  const decay = value.match(/^exp\(-abs\([tn]\)\)$/);
-  if (decay) return (x: number) => Math.exp(-Math.abs(x));
+  try {
+    const evaluator = new Function(
+      "t", "n", "pi", "e", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+      "exp", "log", "sqrt", "abs", "floor", "ceil", "round", "min", "max", "pow", "rect", "sinc",
+      "step", "sgn", "rem",
+      `"use strict"; return (${value});`,
+    ) as (...args: unknown[]) => unknown;
 
-  const rect = value.match(/^rect\([tn]\/([0-9.]+)\)$/);
-  if (rect) {
-    const width = asNumber(rect[1], 1.5);
-    return (x: number) => (Math.abs(x) <= width / 2 ? 1 : 0);
-  }
-
-  const sinc = value.match(/^sinc\(([0-9.]+)?\*?[tn]\)$/);
-  if (sinc) {
-    const scale = asNumber(sinc[1], 1);
-    return (x: number) => {
-      const y = Math.PI * scale * x;
-      return Math.abs(y) < 1e-6 ? 1 : Math.sin(y) / y;
+    const fn = (x: number) => {
+      const sinc = (input: number) => Math.abs(input) < 1e-8 ? 1 : Math.sin(Math.PI * input) / (Math.PI * input);
+      const result = evaluator(
+        x, x, Math.PI, Math.E, Math.sin, Math.cos, Math.tan, Math.asin, Math.acos, Math.atan, Math.sinh,
+        Math.cosh, Math.tanh, Math.exp, Math.log, Math.sqrt, Math.abs, Math.floor, Math.ceil, Math.round,
+        Math.min, Math.max, Math.pow, (input) => Math.abs(input) <= .5 ? 1 : 0, sinc,
+        (input) => input >= 0 ? 1 : 0, Math.sign, (left, right) => left % right,
+      );
+      return typeof result === "number" && Number.isFinite(result) ? clamp(result, -1e6, 1e6) : 0;
     };
+    fn(0);
+    return { fn, error: null };
+  } catch {
+    return fallbackResult("表达式语法有误，已暂时显示标准函数");
   }
-
-  return presetFunction(fallback);
 }
 
-function sampleSignal(fn: (x: number) => number, mode: DomainMode) {
-  return Array.from({ length: SAMPLE_COUNT }, (_, index) => {
-    const x = mode === "continuous" ? -4 + (8 * index) / (SAMPLE_COUNT - 1) : index - 64;
-    const sourceX = mode === "continuous" ? x : x / 16;
-    return { x, y: fn(sourceX) };
+function sampleSignal(fn: (x: number) => number, mode: DomainMode, count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const x = mode === "continuous" ? -4 + (8 * index) / (count - 1) : index - count / 2;
+    return { x, y: fn(x) };
   });
 }
 
@@ -110,8 +124,9 @@ function complexSpectrum(
   mode: DomainMode,
   transform: TransformKind,
 ) {
-  const bins = 64;
-  const dt = mode === "continuous" ? 8 / (SAMPLE_COUNT - 1) : 1;
+  const count = samples.length;
+  const bins = clamp(Math.round(Math.sqrt(count) * 4), 96, 256);
+  const dt = mode === "continuous" ? 8 / (count - 1) : 1;
   const damping = transform === "laplace" ? 0.15 : 0;
   const radius = transform === "z" ? 1.015 : 1;
 
@@ -131,21 +146,76 @@ function complexSpectrum(
   });
 }
 
+function nextPowerOfTwo(value: number) {
+  let result = 1;
+  while (result < value) result *= 2;
+  return result;
+}
+
+function fft(real: number[], imaginary: number[], inverse: boolean) {
+  const length = real.length;
+  for (let index = 1, reversed = 0; index < length; index += 1) {
+    let bit = length >> 1;
+    for (; reversed & bit; bit >>= 1) reversed ^= bit;
+    reversed ^= bit;
+    if (index < reversed) {
+      [real[index], real[reversed]] = [real[reversed], real[index]];
+      [imaginary[index], imaginary[reversed]] = [imaginary[reversed], imaginary[index]];
+    }
+  }
+  for (let segment = 2; segment <= length; segment <<= 1) {
+    const angle = (2 * Math.PI / segment) * (inverse ? -1 : 1);
+    const stepReal = Math.cos(angle);
+    const stepImaginary = Math.sin(angle);
+    for (let start = 0; start < length; start += segment) {
+      let unitReal = 1;
+      let unitImaginary = 0;
+      for (let offset = 0; offset < segment / 2; offset += 1) {
+        const even = start + offset;
+        const odd = even + segment / 2;
+        const oddReal = real[odd] * unitReal - imaginary[odd] * unitImaginary;
+        const oddImaginary = real[odd] * unitImaginary + imaginary[odd] * unitReal;
+        real[odd] = real[even] - oddReal;
+        imaginary[odd] = imaginary[even] - oddImaginary;
+        real[even] += oddReal;
+        imaginary[even] += oddImaginary;
+        const nextReal = unitReal * stepReal - unitImaginary * stepImaginary;
+        unitImaginary = unitReal * stepImaginary + unitImaginary * stepReal;
+        unitReal = nextReal;
+      }
+    }
+  }
+  if (inverse) {
+    for (let index = 0; index < length; index += 1) {
+      real[index] /= length;
+      imaginary[index] /= length;
+    }
+  }
+}
+
 function convolution(
   first: { x: number; y: number }[],
   second: { x: number; y: number }[],
   mode: DomainMode,
 ) {
-  const step = mode === "continuous" ? 8 / (SAMPLE_COUNT - 1) : 1;
-  const values = Array.from({ length: SAMPLE_COUNT * 2 - 1 }, (_, resultIndex) => {
-    let sum = 0;
-    for (let index = 0; index < SAMPLE_COUNT; index += 1) {
-      const other = resultIndex - index;
-      if (other >= 0 && other < SAMPLE_COUNT) sum += first[index].y * second[other].y;
-    }
-    return sum * step;
-  });
-  const start = mode === "continuous" ? -8 : -128;
+  const count = first.length;
+  const resultLength = count * 2 - 1;
+  const fftLength = nextPowerOfTwo(resultLength);
+  const firstReal = Array.from({ length: fftLength }, (_, index) => first[index]?.y ?? 0);
+  const secondReal = Array.from({ length: fftLength }, (_, index) => second[index]?.y ?? 0);
+  const firstImaginary = Array.from({ length: fftLength }, () => 0);
+  const secondImaginary = Array.from({ length: fftLength }, () => 0);
+  fft(firstReal, firstImaginary, false);
+  fft(secondReal, secondImaginary, false);
+  for (let index = 0; index < fftLength; index += 1) {
+    const real = firstReal[index] * secondReal[index] - firstImaginary[index] * secondImaginary[index];
+    firstImaginary[index] = firstReal[index] * secondImaginary[index] + firstImaginary[index] * secondReal[index];
+    firstReal[index] = real;
+  }
+  fft(firstReal, firstImaginary, true);
+  const step = mode === "continuous" ? 8 / (count - 1) : 1;
+  const values = firstReal.slice(0, resultLength).map((value) => value * step);
+  const start = mode === "continuous" ? -8 : -count;
   return values.map((y, index) => ({ x: start + index * step, y }));
 }
 
@@ -170,6 +240,17 @@ function seriesPath(points: { x: number; y: number }[], zoom: number, maxValue: 
       return `${command}${chartX(index, points.length, zoom).toFixed(2)},${chartY(point.y, maxValue).toFixed(2)}`;
     })
     .join(" ");
+}
+
+function maskedSeriesPath(points: { x: number; y: number }[], visible: boolean[], zoom: number, maxValue: number) {
+  let previousVisible = false;
+  return points.map((point, index) => {
+    const isVisible = visible[index];
+    if (!isVisible) { previousVisible = false; return ""; }
+    const command = previousVisible ? "L" : "M";
+    previousVisible = true;
+    return `${command}${chartX(index, points.length, zoom).toFixed(2)},${chartY(point.y, maxValue).toFixed(2)}`;
+  }).join(" ");
 }
 
 function AxisGrid({ label }: { label: string }) {
@@ -294,44 +375,86 @@ export function SignalWorkbench() {
   const [secondExpression, setSecondExpression] = useState(presetExpressions.rect);
   const [shift, setShift] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(1280);
+  const [pixelRatio, setPixelRatio] = useState(1);
   const convolutionRef = useRef<SVGSVGElement>(null);
 
+  useEffect(() => {
+    const updateViewport = () => {
+      setViewportWidth(window.innerWidth);
+      setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    };
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+
+  const sampleCount = useMemo(() => {
+    if (domainMode === "discrete") return 256;
+    const target = viewportWidth * pixelRatio * Math.max(1, timeZoom) * 1.45;
+    return clamp(nextPowerOfTwo(Math.round(target)), 1024, 4096);
+  }, [domainMode, pixelRatio, timeZoom, viewportWidth]);
+
+  const compiledSignal = useMemo(() => parseExpression(expression, preset), [expression, preset]);
+  const compiledFirst = useMemo(() => parseExpression(firstExpression, firstPreset), [firstExpression, firstPreset]);
+  const compiledSecond = useMemo(() => parseExpression(secondExpression, secondPreset), [secondExpression, secondPreset]);
+
   const signal = useMemo(
-    () => sampleSignal(parseExpression(expression, preset), domainMode),
-    [domainMode, expression, preset],
+    () => sampleSignal(compiledSignal.fn, domainMode, sampleCount),
+    [compiledSignal, domainMode, sampleCount],
   );
   const spectrum = useMemo(
     () => complexSpectrum(signal, domainMode, transformKind),
     [domainMode, signal, transformKind],
   );
   const firstSignal = useMemo(
-    () => sampleSignal(parseExpression(firstExpression, firstPreset), domainMode),
-    [domainMode, firstExpression, firstPreset],
+    () => sampleSignal(compiledFirst.fn, domainMode, sampleCount),
+    [compiledFirst, domainMode, sampleCount],
   );
   const secondSignal = useMemo(
-    () => sampleSignal(parseExpression(secondExpression, secondPreset), domainMode),
-    [domainMode, secondExpression, secondPreset],
+    () => sampleSignal(compiledSecond.fn, domainMode, sampleCount),
+    [compiledSecond, domainMode, sampleCount],
   );
   const result = useMemo(
     () => convolution(firstSignal, secondSignal, domainMode),
     [domainMode, firstSignal, secondSignal],
   );
-  const marker = clamp(Math.round((shift + 4) / 8 * (result.length - 1)), 0, result.length - 1);
+  const offsetInSamples = domainMode === "continuous"
+    ? shift / (8 / (sampleCount - 1))
+    : shift * (sampleCount / 16);
+  const marker = clamp(Math.round((domainMode === "continuous" ? sampleCount - 1 : sampleCount) + offsetInSamples), 0, result.length - 1);
   const convolutionMax = normalizeRange([...firstSignal, ...secondSignal]);
   const overlayShift = (shift / 8) * (WIDTH - PAD.left - PAD.right) * timeZoom;
+  const overlapMask = useMemo(() => {
+    const threshold = normalizeRange(firstSignal) * 0.025;
+    const secondThreshold = normalizeRange(secondSignal) * 0.01;
+    return secondSignal.map((point, index) => {
+      const firstIndex = Math.round(index + offsetInSamples);
+      return firstIndex >= 0 && firstIndex < firstSignal.length
+        && Math.abs(firstSignal[firstIndex].y) >= threshold
+        && Math.abs(point.y) >= secondThreshold;
+    });
+  }, [firstSignal, offsetInSamples, secondSignal]);
 
   const choosePreset = (next: Preset) => {
     setPreset(next);
-    setExpression(presetExpressions[next]);
+    setExpression(expressionForPreset(next, domainMode));
   };
   const chooseConvolutionPreset = (target: "first" | "second", next: Preset) => {
     if (target === "first") {
       setFirstPreset(next);
-      setFirstExpression(presetExpressions[next]);
+      setFirstExpression(expressionForPreset(next, domainMode));
     } else {
       setSecondPreset(next);
-      setSecondExpression(presetExpressions[next]);
+      setSecondExpression(expressionForPreset(next, domainMode));
     }
+  };
+  const switchDomain = (next: DomainMode) => {
+    const previousMode = domainMode;
+    if (expression === expressionForPreset(preset, previousMode)) setExpression(expressionForPreset(preset, next));
+    if (firstExpression === expressionForPreset(firstPreset, previousMode)) setFirstExpression(expressionForPreset(firstPreset, next));
+    if (secondExpression === expressionForPreset(secondPreset, previousMode)) setSecondExpression(expressionForPreset(secondPreset, next));
+    setDomainMode(next);
   };
   const updateShift = (event: PointerEvent<SVGSVGElement>) => {
     const svg = convolutionRef.current;
@@ -343,14 +466,16 @@ export function SignalWorkbench() {
 
   const transformName = transformKind === "fourier" ? "傅里叶变换" : transformKind === "laplace" ? "拉普拉斯变换" : "Z 变换";
   const outputTitle = transformKind === "fourier" ? "频域 |X(ω)|" : transformKind === "laplace" ? "s 域 |X(σ+jω)|" : "z 域 |X(re^{jω})|";
+  const expressionStatus = compiledSignal.error ?? compiledFirst.error ?? compiledSecond.error;
+  const shiftLabel = domainMode === "continuous" ? `τ = ${shift.toFixed(2)}` : `k = ${Math.round(shift * (sampleCount / 16))}`;
 
   return (
     <main className="tool-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark" aria-hidden="true" />Signal Lab</div>
         <div className="tab-group" role="group" aria-label="信号类型">
-          <button className={domainMode === "continuous" ? "tab active" : "tab"} onClick={() => setDomainMode("continuous")}>连续时间</button>
-          <button className={domainMode === "discrete" ? "tab active" : "tab"} onClick={() => setDomainMode("discrete")}>离散时间</button>
+          <button className={domainMode === "continuous" ? "tab active" : "tab"} onClick={() => switchDomain("continuous")}>连续时间</button>
+          <button className={domainMode === "discrete" ? "tab active" : "tab"} onClick={() => switchDomain("discrete")}>离散时间</button>
         </div>
         <div className="tab-group" role="group" aria-label="分析工具">
           <button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button>
@@ -364,7 +489,7 @@ export function SignalWorkbench() {
             <label>标准函数<select value={preset} onChange={(event) => choosePreset(event.target.value as Preset)}>{Object.entries(presetLabels).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
             <label className="expression-input">函数表达式<input value={expression} onChange={(event) => setExpression(event.target.value)} spellCheck="false" /></label>
             <label>变换<select value={transformKind} onChange={(event) => setTransformKind(event.target.value as TransformKind)}><option value="fourier">傅里叶变换</option><option value="laplace">拉普拉斯变换</option><option value="z">Z 变换</option></select></label>
-            <span className="status-dot">实时计算</span>
+            <span className={expressionStatus ? "status-dot error" : "status-dot"}>{expressionStatus ?? `${sampleCount} 点自适应采样`}</span>
           </div>
           <div className="plot-grid">
             <article className="plot-panel">
@@ -389,7 +514,7 @@ export function SignalWorkbench() {
           </div>
           <div className="plot-grid">
             <article className="plot-panel">
-              <div className="plot-heading"><div><p>叠加输入</p><h2>拖动 h({domainMode === "continuous" ? "t − τ" : "n − k"})</h2></div><span className="domain-pill">τ = {shift.toFixed(2)}</span></div>
+              <div className="plot-heading"><div><p>叠加输入</p><h2>拖动 h({domainMode === "continuous" ? "t − τ" : "n − k"})</h2></div><span className="domain-pill">{shiftLabel}</span></div>
               <div className="convolution-stage">
                 <SignalPlot id="convolution-first" label="卷积输入信号 x" points={firstSignal} mode={domainMode} zoom={timeZoom} accent="cyan" markerLabel="x" />
                 <svg
@@ -403,8 +528,8 @@ export function SignalWorkbench() {
                   onPointerCancel={() => setDragging(false)}
                 >
                   <defs><clipPath id="clip-convolution-second"><rect x={PAD.left} y={PAD.top} width={WIDTH - PAD.left - PAD.right} height={HEIGHT - PAD.top - PAD.bottom} /></clipPath></defs>
-                  <g clipPath="url(#clip-convolution-second)" transform={`translate(${overlayShift} 0)`}><path className="signal-line plot-pink" d={seriesPath(secondSignal, timeZoom, convolutionMax)} /><circle className="drag-handle" cx={chartX(Math.round(SAMPLE_COUNT / 2), SAMPLE_COUNT, timeZoom)} cy={chartY(secondSignal[Math.round(SAMPLE_COUNT / 2)]?.y ?? 0, convolutionMax)} r="8" /></g>
-                  <text className="plot-label pink-text" x={PAD.left + 8} y={PAD.top + 38}>h(t − τ) · 拖动</text>
+                  <g clipPath="url(#clip-convolution-second)" transform={`translate(${overlayShift} 0)`}><path className="signal-line plot-muted" d={seriesPath(secondSignal, timeZoom, convolutionMax)} /><path className="signal-line plot-pink" d={maskedSeriesPath(secondSignal, overlapMask, timeZoom, convolutionMax)} /><circle className="drag-handle" cx={chartX(Math.round(sampleCount / 2), sampleCount, timeZoom)} cy={chartY(secondSignal[Math.round(sampleCount / 2)]?.y ?? 0, convolutionMax)} r="8" /></g>
+                  <text className="plot-label pink-text" x={PAD.left + 8} y={PAD.top + 38}>粉色：重叠部分　灰色：未重叠</text>
                 </svg>
               </div>
               <ZoomControl label="时域缩放" value={timeZoom} onChange={setTimeZoom} />
@@ -412,7 +537,7 @@ export function SignalWorkbench() {
             <article className="plot-panel">
               <div className="plot-heading"><div><p>实时卷积</p><h2>y(τ) = x * h</h2></div><span className="domain-pill">{domainMode === "continuous" ? "数值积分" : "逐项求和"}</span></div>
               <SignalPlot id="convolution-result" label="实时卷积结果" points={result} mode={domainMode} zoom={timeZoom} accent="violet" markerIndex={marker} markerLabel="y" />
-              <div className="result-readout"><span>当前位置 τ = {shift.toFixed(2)}</span><strong>y(τ) = {(result[marker]?.y ?? 0).toFixed(3)}</strong></div>
+              <div className="result-readout"><span>当前位置 {shiftLabel}</span><strong>y = {(result[marker]?.y ?? 0).toFixed(3)}</strong></div>
             </article>
           </div>
         </section>

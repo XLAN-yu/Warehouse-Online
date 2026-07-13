@@ -63,6 +63,7 @@ button { cursor: pointer; }
 .expression-input input { font-family: var(--font-geist-mono), Consolas, monospace; }
 .status-dot { white-space: nowrap; color: #76f4c1; font-size: 13px; padding-bottom: 10px; }
 .status-dot::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
+.status-dot.error { color: #ffae6a; }
 
 .plot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
 .plot-panel { min-width: 0; padding: 18px; border-radius: 13px; overflow: hidden; }
@@ -80,6 +81,7 @@ button { cursor: pointer; }
 .plot-cyan { color: #31e5ff; stroke: #31e5ff; fill: #31e5ff; }
 .plot-pink { color: #ff6ac9; stroke: #ff6ac9; fill: #ff6ac9; }
 .plot-violet { color: #9a8dff; stroke: #9a8dff; fill: #9a8dff; }
+.plot-muted { color: #6d7788; stroke: #6d7788; fill: #6d7788; opacity: .7; filter: none; }
 .spectrum-area { fill: rgba(255, 106, 201, .13); stroke: none; }
 .zoom-control { display: grid; grid-template-columns: auto auto minmax(110px, 1fr); align-items: center; gap: 9px; margin-top: 5px; color: #95a5be; font-size: 12px; }
 .zoom-control output { min-width: 32px; color: #e7f1ff; text-align: right; font-family: var(--font-geist-mono), monospace; }
