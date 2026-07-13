@@ -150,7 +150,7 @@ function convolution(
 }
 
 function normalizeRange(points: { x: number; y: number }[]) {
-  return Math.max(0.2, ...points.map((point) => Math.abs(point.y));
+  return Math.max(0.2, ...points.map((point) => Math.abs(point.y)));
 }
 
 function chartX(index: number, count: number, zoom: number) {
