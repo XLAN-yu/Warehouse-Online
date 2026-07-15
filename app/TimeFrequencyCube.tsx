@@ -298,6 +298,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                   {Array.from({ length: 4 }, (_, gridIndex) => <line key={`time-h-${gridIndex}`} className="time-slice-grid" x1="28" x2={timeRight} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
                   {Array.from({ length: 6 }, (_, gridIndex) => <line key={`time-v-${gridIndex}`} className="time-slice-grid" x1={28 + gridIndex * ((timeRight - 28) / 5)} x2={28 + gridIndex * ((timeRight - 28) / 5)} y1="38" y2="262" />)}
                   <line className="slice-axis" x1="28" y1={SIGNAL_AXIS_Y} x2={timeRight} y2={SIGNAL_AXIS_Y} />
+                  <circle className="slice-axis-joint" cx={timeRight} cy={SIGNAL_AXIS_Y} r={selectedSlice ? 3.8 : 2.4} />
                   <path className="slice-wave" d={componentPath(component, mode, displayAmplitudeLimit)} />
                   <line className="slice-depth-hinge" x1={timeRight} x2={timeRight} y1="39" y2="261" />
                   {selectedSlice && <>
@@ -325,6 +326,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                     return <g key={component.id} data-slice-index={index} className={`frequency-wall-peak ${selectedSlice ? "selected" : ""}`} style={{ color }}>
                       <line className="frequency-depth-guide" x1={frequencyX} x2={frequencyX} y1="42" y2={SIGNAL_AXIS_Y} />
                       <line className="frequency-peak-stem" x1={frequencyX} x2={frequencyX} y1={SIGNAL_AXIS_Y} y2={peakY} />
+                      <circle className="frequency-axis-joint" cx={frequencyX} cy={SIGNAL_AXIS_Y} r={selectedSlice ? 3.8 : 2.4} />
                       <circle className="frequency-peak-dot" cx={frequencyX} cy={peakY} r={selectedSlice ? 6 : 4.2} />
                       <text className="frequency-slice-tag" x={frequencyX} y={SIGNAL_AXIS_Y + 20} textAnchor="middle">k{index + 1}</text>
                       {selectedSlice && <><text className="frequency-peak-value" x={frequencyX} y={peakY - 17} textAnchor="middle">A {round(component.amplitude, 2)}</text><text className="frequency-peak-frequency" x={frequencyX} y={peakY - 32} textAnchor="middle">{componentFrequency(component, mode, true)}</text></>}
