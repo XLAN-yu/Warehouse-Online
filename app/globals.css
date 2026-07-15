@@ -56,6 +56,7 @@ button { cursor: pointer; }
 
 .workspace { max-width: 1520px; margin: 22px auto 0; }
 .control-row { display: grid; grid-template-columns: 175px minmax(250px, 1fr) 180px auto; align-items: end; gap: 14px; padding: 15px; border-radius: 13px; }
+.transform-controls { grid-template-columns: 185px minmax(250px, 1fr) 165px 176px auto; }
 .convolution-controls { grid-template-columns: 145px minmax(190px, 1fr) 145px minmax(190px, 1fr); }
 .control-row label { display: grid; gap: 7px; color: #95a5be; font-size: 12px; letter-spacing: .04em; }
 .control-row select, .control-row input { width: 100%; border: 1px solid rgba(166, 186, 216, .18); border-radius: 8px; padding: 10px 11px; color: #eaf3ff; background: #0a101c; outline: none; font-size: 14px; letter-spacing: normal; }
@@ -64,6 +65,27 @@ button { cursor: pointer; }
 .status-dot { white-space: nowrap; color: #76f4c1; font-size: 13px; padding-bottom: 10px; }
 .status-dot::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
 .status-dot.error { color: #ffae6a; }
+.direction-toggle { display: flex; align-items: stretch; min-height: 40px; padding: 4px; gap: 4px; border: 1px solid rgba(166, 186, 216, .16); border-radius: 8px; background: #0a101c; }
+.mini-tab { flex: 1; border: 0; border-radius: 5px; padding: 7px 9px; color: #aab9cf; background: transparent; font-size: 12px; white-space: nowrap; }
+.mini-tab:hover:not(:disabled) { background: rgba(255,255,255,.08); color: #f1f8ff; }
+.mini-tab.active { background: rgba(72, 217, 235, .18); color: #8cecf8; }
+.mini-tab:disabled { cursor: not-allowed; color: #5d6a80; }
+.shortcut-bar { display: flex; flex-wrap: wrap; gap: 7px; margin: 11px 0 0; padding: 10px 12px; border: 1px solid rgba(166, 186, 216, .12); border-radius: 11px; background: rgba(13, 19, 32, .55); }
+.shortcut-bar::before { content: "数学快捷输入"; align-self: center; margin-right: 4px; color: #8494ad; font-size: 12px; }
+.shortcut-bar button { border: 1px solid rgba(130, 207, 232, .19); border-radius: 6px; padding: 5px 8px; color: #cdefff; background: rgba(66, 177, 208, .09); font-family: var(--font-geist-mono), Consolas, monospace; font-size: 12px; }
+.shortcut-bar button:hover { background: rgba(79, 216, 236, .21); border-color: rgba(100, 233, 248, .5); }
+.inverse-row { display: flex; align-items: end; gap: 14px; margin-top: 11px; padding: 11px 14px; border: 1px solid rgba(166, 186, 216, .12); border-radius: 11px; background: rgba(13, 19, 32, .55); }
+.inverse-row .direction-toggle { width: 226px; }
+.inverse-expression { flex: 1; display: grid; gap: 7px; color: #95a5be; font-size: 12px; letter-spacing: .04em; }
+.inverse-expression input { width: 100%; border: 1px solid rgba(166, 186, 216, .18); border-radius: 8px; padding: 10px 11px; color: #eaf3ff; background: #0a101c; outline: none; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 14px; }
+.property-panel { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 14px; align-items: center; margin-top: 11px; padding: 12px 14px; border: 1px solid rgba(113, 165, 255, .22); border-radius: 11px; background: linear-gradient(90deg, rgba(87, 105, 238, .12), rgba(13, 19, 32, .55)); }
+.property-panel > label { display: grid; gap: 7px; color: #9aafd0; font-size: 12px; letter-spacing: .05em; }
+.property-panel select { border: 1px solid rgba(166, 186, 216, .18); border-radius: 8px; padding: 9px; color: #eaf3ff; background: #0a101c; }
+.property-formula { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: center; min-width: 0; }
+.property-formula strong { color: #b8b1ff; font-size: 13px; }
+.property-formula code { min-width: 0; overflow: hidden; color: #dce5ff; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.property-formula span { grid-column: 1 / -1; color: #8d9ab0; font-size: 12px; }
+.property-formula b { grid-column: 1 / -1; color: #78e7f3; font-size: 12px; font-weight: 500; }
 
 .plot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
 .plot-panel { min-width: 0; padding: 18px; border-radius: 13px; overflow: hidden; }
@@ -83,6 +105,8 @@ button { cursor: pointer; }
 .plot-violet { color: #9a8dff; stroke: #9a8dff; fill: #9a8dff; }
 .plot-muted { color: #6d7788; stroke: #6d7788; fill: #6d7788; opacity: .7; filter: none; }
 .spectrum-area { fill: rgba(255, 106, 201, .13); stroke: none; }
+.spectrum-divider { stroke: rgba(166, 186, 216, .18); stroke-width: 1; }
+.phase-line { fill: none; stroke: #9a8dff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 3px #9a8dff); }
 .zoom-control { display: grid; grid-template-columns: auto auto minmax(110px, 1fr); align-items: center; gap: 9px; margin-top: 5px; color: #95a5be; font-size: 12px; }
 .zoom-control output { min-width: 32px; color: #e7f1ff; text-align: right; font-family: var(--font-geist-mono), monospace; }
 .zoom-control input { accent-color: #52ddec; }
@@ -95,12 +119,14 @@ button { cursor: pointer; }
 .result-readout strong { color: #c7c2ff; font-family: var(--font-geist-mono), monospace; }
 .cyan-text { color: #31e5ff; }
 .pink-text { color: #ff6ac9; fill: #ff6ac9; }
+.violet-text { color: #bcb4ff; fill: #bcb4ff; }
 
 @media (max-width: 920px) {
   .tool-shell { padding: 10px; }
   .topbar { align-items: stretch; flex-wrap: wrap; }
   .brand { width: 100%; }
-  .control-row, .convolution-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-row, .convolution-controls, .transform-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .property-panel { grid-template-columns: 1fr; }
   .status-dot { padding-bottom: 0; }
 }
 
@@ -109,7 +135,11 @@ button { cursor: pointer; }
   .tab { padding: 8px 9px; font-size: 13px; }
   .tab-group { width: 100%; justify-content: stretch; }
   .tab { flex: 1; }
-  .plot-grid, .control-row, .convolution-controls { grid-template-columns: 1fr; }
+  .plot-grid, .control-row, .convolution-controls, .transform-controls { grid-template-columns: 1fr; }
+  .inverse-row { align-items: stretch; flex-direction: column; }
+  .inverse-row .direction-toggle { width: 100%; }
+  .property-formula { grid-template-columns: 1fr; }
+  .property-formula span, .property-formula b { grid-column: auto; }
   .plot-panel { padding: 13px; }
   .signal-plot { min-height: auto; }
 }
