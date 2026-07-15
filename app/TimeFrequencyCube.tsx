@@ -290,7 +290,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
               {components.map((component, index) => {
                 const selectedSlice = index === selectedIndex;
                 const color = SLICE_COLORS[index % SLICE_COLORS.length];
-                const timeRight = CUBE_WIDTH - 54;
+                const timeRight = CUBE_WIDTH;
                 return <svg key={component.id} data-slice-index={index} className={`cube-slice-plane cube-time-slice ${selectedSlice ? "selected" : ""}`} style={{ transform: `translateZ(${sliceDepth(index)}px)`, color, opacity: selectedSlice ? 1 : 0.3 }} viewBox={`0 0 ${CUBE_WIDTH} ${CUBE_HEIGHT}`} role="img" aria-label={`时域切片 k${index + 1}：${componentFrequency(component, mode, true)}`}>
                   <rect className="slice-plane-fill time-slice-fill" x="12" y="18" width={CUBE_WIDTH - 64} height={CUBE_HEIGHT - 36} rx="4" />
                   {Array.from({ length: 4 }, (_, gridIndex) => <line key={`time-h-${gridIndex}`} className="time-slice-grid" x1="28" x2={timeRight} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
@@ -314,7 +314,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                   {Array.from({ length: 5 }, (_, gridIndex) => <line key={`frequency-v-${gridIndex}`} className="frequency-wall-grid" x1={22 + gridIndex * ((CUBE_DEPTH - 44) / 4)} x2={22 + gridIndex * ((CUBE_DEPTH - 44) / 4)} y1="38" y2="262" />)}
                   <line className="frequency-wall-axis" x1="22" x2={CUBE_DEPTH - 22} y1="246" y2="246" />
                   <text className="frequency-face-title" x="24" y="53">Y 面 · |Xₖ(ω)|</text>
-                  <text className="frequency-wall-axis-label" x="22" y="267">切片深度 k</text>
+                  <text className="frequency-wall-axis-label" x="22" y="267">切片深度 k · 峰频率见标签</text>
                   {components.map((component, index) => {
                     const selectedSlice = index === selectedIndex;
                     const color = SLICE_COLORS[index % SLICE_COLORS.length];
