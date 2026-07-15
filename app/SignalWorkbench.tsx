@@ -18,8 +18,9 @@ import {
   type DomainMode,
   type Point,
 } from "./signalEngine";
+import { TimeFrequencyCube } from "./TimeFrequencyCube";
 
-type ToolMode = "transform" | "convolution";
+type ToolMode = "transform" | "convolution" | "cube";
 type TransformKind = "fourier" | "laplace" | "z";
 type TransformDirection = "forward" | "inverse";
 type InverseSource = "current" | "formula";
@@ -263,7 +264,7 @@ export function SignalWorkbench() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark" aria-hidden="true" />Signal Lab</div>
       <div className="tab-group" role="group" aria-label="信号类型"><button className={domainMode === "continuous" ? "tab active" : "tab"} onClick={() => switchDomain("continuous")}>连续时间</button><button className={domainMode === "discrete" ? "tab active" : "tab"} onClick={() => switchDomain("discrete")}>离散时间</button></div>
-      <div className="tab-group" role="group" aria-label="分析工具"><button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button><button className={toolMode === "convolution" ? "tab active" : "tab"} onClick={() => setToolMode("convolution")}>卷积</button></div>
+      <div className="tab-group" role="group" aria-label="分析工具"><button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button><button className={toolMode === "convolution" ? "tab active" : "tab"} onClick={() => setToolMode("convolution")}>卷积</button><button className={toolMode === "cube" ? "tab active" : "tab"} onClick={() => setToolMode("cube")}>时频立方体</button></div>
     </header>
 
     {toolMode === "transform" ? <section className="workspace" aria-label="傅里叶变换工作台">
@@ -289,7 +290,7 @@ export function SignalWorkbench() {
           <ZoomControl label={direction === "forward" ? "频域缩放" : "时域缩放"} value={direction === "forward" ? frequencyZoom : timeZoom} onChange={direction === "forward" ? setFrequencyZoom : setTimeZoom} />
         </article>
       </div>
-    </section> : <section className="workspace" aria-label="卷积工作台">
+    </section> : toolMode === "convolution" ? <section className="workspace" aria-label="卷积工作台">
       <div className="control-row convolution-controls">
         <label>x({domainMode === "continuous" ? "t" : "n"})<select value={firstPreset} onChange={(event) => choosePreset(event.target.value, "first")}>{displayPresetOptions(domainMode)}</select></label>
         <label className="expression-input"><span className="cyan-text">x</span> 函数<input value={firstExpression} onChange={(event) => setFirstExpression(event.target.value)} spellCheck="false" /></label>
@@ -302,6 +303,6 @@ export function SignalWorkbench() {
         <article className="plot-panel"><div className="plot-heading"><div><p>叠加输入</p><h2>拖动 h({domainMode === "continuous" ? "τ − t" : "k − n"})</h2></div><span className="domain-pill">{convolutionShiftLabel}</span></div><div className="convolution-stage"><SignalPlot id="convolution-first" label="卷积输入信号 x" points={firstSignal} mode={domainMode} zoom={timeZoom} accent="cyan" markerLabel="x" /><svg className="signal-plot signal-overlay draggable-plot" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} aria-label="可拖动的时间翻转卷积函数" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setDraggingConvolution(true); updateConvolutionShift(event); }} onPointerMove={draggingConvolution ? updateConvolutionShift : undefined} onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingConvolution(false); }} onPointerCancel={() => setDraggingConvolution(false)}><defs><clipPath id="clip-convolution-second"><rect x={PAD.left} y={PAD.top} width={WIDTH - PAD.left - PAD.right} height={HEIGHT - PAD.top - PAD.bottom} /></clipPath></defs><g clipPath="url(#clip-convolution-second)" transform={`translate(${overlayShift} 0)`}><path className="signal-line plot-muted" d={seriesPath(reversedSecond, timeZoom, convolutionMaximum)} /><path className="signal-line plot-pink" d={seriesPath(reversedSecond, timeZoom, convolutionMaximum, overlapMask)} /><circle className="drag-handle" cx={chartX(Math.floor(sampleCount / 2), sampleCount, timeZoom)} cy={chartY(reversedSecond[Math.floor(sampleCount / 2)]?.y ?? 0, convolutionMaximum)} r="8" /></g><text className="plot-label pink-text" x={PAD.left + 8} y={PAD.top + 38}>粉色：当前重叠　灰色：未重叠</text></svg></div><ZoomControl label="时域缩放" value={timeZoom} onChange={setTimeZoom} /></article>
         <article className="plot-panel"><div className="plot-heading"><div><p>实时卷积</p><h2>y(τ) = ∫x(t)h(τ − t)dt</h2></div><span className="domain-pill">{domainMode === "continuous" ? "数值积分" : "逐项求和"}</span></div><SignalPlot id="convolution-result" label="实时卷积结果" points={convolutionResult} mode={domainMode} zoom={timeZoom} accent="violet" markerIndex={resultMarker} markerLabel="y" activeUntil={resultMarker} /><div className="result-readout"><span>当前位置 {convolutionShiftLabel}</span><strong>y = {(convolutionResult[resultMarker]?.y ?? 0).toFixed(3)}</strong></div></article>
       </div>
-    </section>}
+    </section> : <TimeFrequencyCube signal={signal} spectrum={fourier.points} mode={domainMode} />}
   </main>;
 }
