@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { clamp, type ComplexPoint, type DomainMode, type Point } from "./signalEngine";
 
 type SliceSource = "demo" | "current";
@@ -167,6 +167,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
   const [orbit, setOrbit] = useState<Orbit>({ yaw: VIEW_PRESETS.overview.yaw, pitch: VIEW_PRESETS.overview.pitch });
   const [cubeScale, setCubeScale] = useState(1);
   const [dragging, setDragging] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
   const orbitRef = useRef(orbit);
   const dragRef = useRef<{ x: number; y: number; orbit: Orbit; moved: boolean } | null>(null);
   const previousMode = useRef(mode);
@@ -195,6 +196,17 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     if (source !== "current") return;
     setCurrentDrafts((drafts) => ({ ...drafts, [mode]: cloneComponents(currentComponents) }));
   }, [currentComponents, mode, source]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setCubeScale((current) => clamp(current - event.deltaY * 0.001, 0.76, 1.22));
+    };
+    stage.addEventListener("wheel", handleWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", handleWheel);
+  }, []);
 
   const setOrbitSafely = (next: Orbit) => {
     orbitRef.current = next;
@@ -252,11 +264,6 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     dragRef.current = null;
     setDragging(false);
   };
-  const zoomCube = (event: WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setCubeScale((current) => clamp(current - event.deltaY * 0.001, 0.76, 1.22));
-  };
-
   const sliceGap = componentCount > 1 ? (CUBE_DEPTH - 56) / (componentCount - 1) : 0;
   const sliceDepth = (index: number) => (index - (componentCount - 1) / 2) * sliceGap;
   const cubeTransform = `scale(${cubeScale}) rotateX(${orbit.pitch}deg) rotateY(${orbit.yaw}deg)`;
@@ -285,7 +292,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
           {(Object.keys(VIEW_PRESETS) as ViewId[]).map((view) => <button key={view} className={activeView === view ? "mini-tab active" : "mini-tab"} onClick={() => selectView(view)}>{VIEW_PRESETS[view].label}</button>)}
           <span>拖动旋转 · 滚轮缩放 · 双击回到总览</span>
         </div>
-        <div className="cube-stage" aria-describedby="cube-instructions" onWheel={zoomCube}>
+        <div ref={stageRef} className="cube-stage" aria-describedby="cube-instructions">
           <div className="cube-stage-hud" aria-hidden="true"><span>{VIEW_PRESETS[activeView].hint}</span><b>{sourceLabel}</b></div>
           <div className="tf-cube-wrap">
             <div

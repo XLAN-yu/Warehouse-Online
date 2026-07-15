@@ -111,9 +111,10 @@ button { cursor: pointer; }
 .zoom-control { display: grid; grid-template-columns: auto auto minmax(110px, 1fr); align-items: center; gap: 9px; margin-top: 5px; color: #95a5be; font-size: 12px; }
 .zoom-control output { min-width: 32px; color: #e7f1ff; text-align: right; font-family: var(--font-geist-mono), monospace; }
 .zoom-control input { accent-color: #52ddec; }
-.convolution-stage { position: relative; }
+.convolution-stage { position: relative; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .signal-overlay { position: absolute; inset: 0; }
-.draggable-plot { cursor: ew-resize; }
+.signal-plot { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; }
+.draggable-plot { cursor: ew-resize; overscroll-behavior: contain; }
 .drag-handle { fill: #0e1523; stroke: #ff6ac9; stroke-width: 2.5; filter: drop-shadow(0 0 6px #ff6ac9); }
 .result-marker line { stroke: rgba(236, 242, 255, .6); stroke-width: 1.2; stroke-dasharray: 4 4; }
 .result-readout { display: flex; justify-content: space-between; gap: 12px; margin-top: 13px; color: #9aa9bf; font-size: 13px; }
@@ -136,7 +137,7 @@ button { cursor: pointer; }
 .cube-view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 13px 0 8px; }
 .cube-view-controls .mini-tab { flex: 0 0 auto; border: 1px solid rgba(130, 207, 232, .15); background: rgba(66, 177, 208, .06); }
 .cube-view-controls > span { margin-left: 4px; color: #7c8aa0; font-size: 12px; }
-.cube-stage { position: relative; display: grid; min-height: 455px; overflow: hidden; place-items: center; border: 1px solid rgba(95, 157, 201, .15); border-radius: 12px; background: radial-gradient(circle at 50% 56%, rgba(43, 119, 166, .13), transparent 49%), linear-gradient(135deg, rgba(5, 9, 16, .95), rgba(11, 19, 33, .85)); perspective: 1180px; perspective-origin: 50% 46%; }
+.cube-stage { position: relative; display: grid; min-height: 455px; overflow: hidden; place-items: center; border: 1px solid rgba(95, 157, 201, .15); border-radius: 12px; background: radial-gradient(circle at 50% 56%, rgba(43, 119, 166, .13), transparent 49%), linear-gradient(135deg, rgba(5, 9, 16, .95), rgba(11, 19, 33, .85)); perspective: 1180px; perspective-origin: 50% 46%; overscroll-behavior: contain; touch-action: none; user-select: none; -webkit-user-select: none; }
 .cube-stage::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(119, 177, 219, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(119, 177, 219, .035) 1px, transparent 1px); background-size: 26px 26px; mask-image: radial-gradient(ellipse at center, black, transparent 78%); }
 .cube-stage-hud { position: absolute; z-index: 4; top: 13px; left: 14px; right: 14px; display: flex; justify-content: space-between; gap: 10px; color: #7f91aa; font-size: 12px; pointer-events: none; }
 .cube-stage-hud b { color: #b5dfff; font-weight: 500; }
