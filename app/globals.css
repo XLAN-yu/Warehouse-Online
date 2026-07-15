@@ -228,7 +228,7 @@ button { cursor: pointer; }
 .frequency-peak-frequency { fill: #f3d4ec; font-size: 10px; }
 .frequency-wall-peak.selected { opacity: 1; }
 .frequency-wall-peak.selected .frequency-peak-stem { stroke-width: 5.2; }
-.tf-cube.time-focus .cube-frequency-wall { opacity: .18; }
+.tf-cube.time-focus .cube-frequency-wall { opacity: .68; }
 .tf-cube.frequency-focus .cube-time-slice { opacity: .1 !important; }
 .tf-cube.frequency-focus .cube-frequency-wall { opacity: 1; }
 .component-editor { display: grid; gap: 7px; margin-top: 14px; padding: 11px; border: 1px solid rgba(166, 186, 216, .11); border-radius: 10px; background: rgba(4, 10, 19, .27); }

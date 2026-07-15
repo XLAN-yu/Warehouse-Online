@@ -21,9 +21,9 @@ const AMPLITUDE_FLOOR = 1.5;
 const SLICE_COLORS = ["#45e7ff", "#a895ff", "#54e4bc", "#ff9cda", "#ffa968", "#6bb6ff", "#e4d66a", "#ff7f9a"];
 
 const VIEW_PRESETS: Record<ViewId, Orbit & { label: string; hint: string }> = {
-  time: { yaw: -16, pitch: -5, label: "时域切片", hint: "前侧：沿深度堆叠的单一时域平面" },
-  overview: { yaw: -40, pitch: -14, label: "透视总览", hint: "时域切片与右侧频域面相互垂直" },
-  frequency: { yaw: -86, pitch: -3, label: "频域面", hint: "右侧 Y 面：每个切片对应一根频谱峰" },
+  time: { yaw: -28, pitch: -8, label: "时域正视", hint: "正面 X 切片；右侧同时可见频域墙的侧面" },
+  overview: { yaw: -32, pitch: -14, label: "空间总览", hint: "时域切片在正面，频域 Y–Z 面从右侧透视" },
+  frequency: { yaw: -86, pitch: -3, label: "频域侧视", hint: "沿 X 轴看向 Y–Z 频域墙；同色谱线对应后方同深度的时域切片" },
 };
 
 const DEMO_CONTINUOUS: FrequencyComponent[] = [
@@ -241,7 +241,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     <div className="cube-intro">
       <div>
         <p>独立可视化工具</p>
-        <h1>时频正交切片立方体</h1>
+        <h1>时域切片 · 频域侧视</h1>
         <span>时域由多张平行切片组成；右侧 Y 面是一张与切片垂直的频域墙。同色 k 标记和相同深度坐标，把每个时域分量与它的频谱峰对应起来。</span>
       </div>
       <div className="cube-source-toggle" role="group" aria-label="立方体数据源">
