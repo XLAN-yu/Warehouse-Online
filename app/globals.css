@@ -199,6 +199,40 @@ button { cursor: pointer; }
 .cube-warning { margin: 13px 0 0; color: #ffbe7c; font-size: 12px; line-height: 1.5; }
 .cube-semantic-note { margin: auto 0 0; padding-top: 15px; color: #7e8fa8; font-size: 12px; line-height: 1.55; }
 
+/* 每个切片都在同一张平面内呈现时域与频域，避免两套视图在三维空间错位。 */
+.cube-face { pointer-events: none; }
+.cube-face-front { transform: translateZ(150px); background: transparent; }
+.cube-slice-plane { pointer-events: auto; cursor: pointer; transform-style: preserve-3d; }
+.slice-time-panel { fill: rgba(6, 19, 32, .29); stroke: rgba(128, 204, 229, .2); stroke-width: 1; }
+.slice-spectrum-panel { fill: rgba(29, 10, 43, .31); stroke: rgba(236, 147, 224, .24); stroke-width: 1; }
+.slice-grid { stroke: rgba(157, 188, 210, .1); stroke-width: 1; }
+.slice-region-title { fill: currentColor; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 11px; font-weight: 600; }
+.slice-axis-label { fill: rgba(210, 227, 244, .7); font-family: var(--font-geist-mono), Consolas, monospace; font-size: 10px; }
+.slice-divider { stroke: currentColor; stroke-width: 1.2; stroke-dasharray: 4 5; opacity: .72; }
+.slice-spectrum-stem { stroke: currentColor; stroke-width: 4; stroke-linecap: round; filter: drop-shadow(0 0 4px currentColor); }
+.slice-spectrum-dot { fill: currentColor; stroke: #0a1020; stroke-width: 1.5; filter: drop-shadow(0 0 5px currentColor); }
+.slice-component-tag { fill: currentColor; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 13px; font-weight: 700; }
+.slice-spectrum-value { fill: currentColor; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 12px; font-weight: 700; }
+.slice-spectrum-frequency { fill: #f3d4ec; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 10px; }
+.slice-correspondence-line { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 2 4; opacity: .9; }
+.selected-slice-outline { fill: none; stroke: currentColor; stroke-width: 2.2; filter: drop-shadow(0 0 5px currentColor); }
+.tf-cube.time-focus .slice-spectrum-region { opacity: .22; }
+.tf-cube.frequency-focus .slice-time-region { opacity: .2; }
+.tf-cube.frequency-focus .slice-spectrum-region { opacity: 1; }
+.component-editor { display: grid; gap: 7px; margin-top: 14px; padding: 11px; border: 1px solid rgba(166, 186, 216, .11); border-radius: 10px; background: rgba(4, 10, 19, .27); }
+.component-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #aab9cf; font-size: 12px; }
+.add-component { border: 1px solid rgba(111, 227, 245, .3); border-radius: 6px; padding: 5px 7px; color: #bff5fb; background: rgba(75, 210, 231, .1); font-size: 11px; }
+.add-component:hover:not(:disabled) { border-color: #71e6f4; background: rgba(75, 210, 231, .2); }
+.add-component:disabled { cursor: not-allowed; opacity: .42; }
+.component-editor-row { display: grid; grid-template-columns: minmax(82px, .8fr) minmax(90px, 1fr) auto; align-items: center; gap: 8px; padding: 7px 6px; border: 1px solid transparent; border-radius: 6px; }
+.component-editor-row.selected { border-color: color-mix(in srgb, var(--slice-color) 54%, transparent); background: color-mix(in srgb, var(--slice-color) 8%, transparent); }
+.component-editor-select { display: flex; align-items: baseline; gap: 5px; min-width: 0; border: 0; color: #9badc4; background: transparent; text-align: left; }
+.component-editor-select:hover { color: #effbff; }
+.component-editor-select b { color: var(--slice-color); font-family: var(--font-geist-mono), Consolas, monospace; font-size: 12px; }
+.component-editor-select span { overflow: hidden; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.component-editor-row input { width: 100%; accent-color: var(--slice-color); }
+.component-editor-row output { min-width: 42px; color: #e3edf9; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 11px; text-align: right; }
+
 @media (max-width: 920px) {
   .tool-shell { padding: 10px; }
   .topbar { align-items: stretch; flex-wrap: wrap; }
@@ -228,4 +262,5 @@ button { cursor: pointer; }
   .tf-cube-wrap { transform: scale(.63); transform-origin: center; }
   .cube-stage-hud { font-size: 11px; }
   .cube-view-controls > span { width: 100%; margin-left: 0; }
+  .component-editor-row { grid-template-columns: minmax(75px, .8fr) minmax(70px, 1fr) auto; gap: 5px; }
 }

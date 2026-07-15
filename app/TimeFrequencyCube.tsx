@@ -16,13 +16,13 @@ type FrequencyComponent = {
 
 const CUBE_WIDTH = 520;
 const CUBE_HEIGHT = 300;
-const CUBE_DEPTH = 300;
+const AMPLITUDE_FLOOR = 1.5;
 const SLICE_COLORS = ["#45e7ff", "#a895ff", "#54e4bc", "#ff9cda", "#ffa968", "#6bb6ff", "#e4d66a", "#ff7f9a"];
 
 const VIEW_PRESETS: Record<ViewId, Orbit & { label: string; hint: string }> = {
-  time: { yaw: 0, pitch: -3, label: "时域面", hint: "正面：合成信号与各个时域分量" },
-  overview: { yaw: -32, pitch: -12, label: "透视总览", hint: "同时查看时域切片和频谱峰" },
-  frequency: { yaw: -88, pitch: -2, label: "频域面", hint: "右侧：每个切片对应的频率与幅度" },
+  time: { yaw: -10, pitch: -4, label: "时域重点", hint: "每层左半区：单一时域分量" },
+  overview: { yaw: -32, pitch: -12, label: "切片总览", hint: "每张平面同时承载时域与频域" },
+  frequency: { yaw: -5, pitch: -2, label: "频域重点", hint: "每层右半区：与波形共面的频谱峰" },
 };
 
 const DEMO_CONTINUOUS: FrequencyComponent[] = [
@@ -43,6 +43,10 @@ const DEMO_DISCRETE: FrequencyComponent[] = [
   { id: "demo-d-6", omega: 0.91 * Math.PI, amplitude: 0.13, phase: 0.7, magnitude: 0.13 },
 ];
 
+function cloneComponents(components: FrequencyComponent[]) {
+  return components.map((component) => ({ ...component }));
+}
+
 function round(value: number, digits = 2) {
   const precision = 10 ** digits;
   return Math.round(value * precision) / precision;
@@ -60,15 +64,6 @@ function timeRange(mode: DomainMode) {
 
 function componentValue(component: FrequencyComponent, time: number) {
   return component.amplitude * Math.cos(component.omega * time + component.phase);
-}
-
-function makeDemoSignal(mode: DomainMode, components: FrequencyComponent[]): Point[] {
-  const { start, end, count } = timeRange(mode);
-  const step = (end - start) / Math.max(count - 1, 1);
-  return Array.from({ length: count }, (_, index) => {
-    const x = start + index * step;
-    return { x, y: components.reduce((sum, component) => sum + componentValue(component, x), 0) };
-  });
 }
 
 function componentAmplitude(point: ComplexPoint, signal: Point[], mode: DomainMode) {
@@ -106,29 +101,12 @@ function extractComponents(spectrum: ComplexPoint[], signal: Point[], mode: Doma
     }));
 }
 
-function pointPath(points: Point[], width: number, height: number, maxValue: number) {
-  const finite = points.filter((point) => Number.isFinite(point.y));
-  if (!finite.length) return "";
-  const minimumX = points[0]?.x ?? -1;
-  const maximumX = points[points.length - 1]?.x ?? 1;
-  const xSpan = Math.max(maximumX - minimumX, 1e-8);
-  let drawn = false;
-  return points.map((point) => {
-    if (!Number.isFinite(point.y)) { drawn = false; return ""; }
-    const x = 20 + ((point.x - minimumX) / xSpan) * (width - 40);
-    const y = height / 2 - (point.y / Math.max(maxValue, 1e-8)) * height * 0.32;
-    const command = drawn ? "L" : "M";
-    drawn = true;
-    return `${command}${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
-}
-
-function componentPath(component: FrequencyComponent, mode: DomainMode, width: number, height: number, amplitudeScale: number) {
+function componentPath(component: FrequencyComponent, mode: DomainMode, amplitudeScale: number) {
   const { start, end, count } = timeRange(mode);
   return Array.from({ length: count }, (_, index) => {
     const time = start + ((end - start) * index) / Math.max(count - 1, 1);
-    const x = 20 + (index / Math.max(count - 1, 1)) * (width - 40);
-    const y = height / 2 - (componentValue(component, time) / Math.max(amplitudeScale, 1e-8)) * height * 0.34;
+    const x = 22 + (index / Math.max(count - 1, 1)) * 258;
+    const y = 157 - (componentValue(component, time) / Math.max(amplitudeScale, 1e-8)) * 92;
     return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
 }
@@ -149,36 +127,79 @@ function nearestView(orbit: Orbit): ViewId {
   }, "overview");
 }
 
+function nextOmega(components: FrequencyComponent[], mode: DomainMode) {
+  const highest = Math.max(0, ...components.map((component) => component.omega));
+  if (mode === "discrete") {
+    const candidate = highest > 0 ? highest + 0.12 * Math.PI : 0.18 * Math.PI;
+    return candidate < 0.96 * Math.PI ? candidate : 0.16 * Math.PI;
+  }
+  return highest > 0 ? highest + 2 * Math.PI * 0.6 : 2 * Math.PI;
+}
+
 export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[]; spectrum: ComplexPoint[]; mode: DomainMode }) {
   const [source, setSource] = useState<SliceSource>("demo");
+  const [demoDrafts, setDemoDrafts] = useState<Record<DomainMode, FrequencyComponent[]>>(() => ({
+    continuous: cloneComponents(DEMO_CONTINUOUS),
+    discrete: cloneComponents(DEMO_DISCRETE),
+  }));
+  const [currentDrafts, setCurrentDrafts] = useState<Record<DomainMode, FrequencyComponent[]>>({ continuous: [], discrete: [] });
   const [selectedIndex, setSelectedIndex] = useState(1);
   const [orbit, setOrbit] = useState<Orbit>({ yaw: VIEW_PRESETS.overview.yaw, pitch: VIEW_PRESETS.overview.pitch });
   const [cubeScale, setCubeScale] = useState(1);
   const [dragging, setDragging] = useState(false);
   const orbitRef = useRef(orbit);
   const dragRef = useRef<{ x: number; y: number; orbit: Orbit; moved: boolean } | null>(null);
+  const previousMode = useRef(mode);
 
-  const demoComponents = mode === "continuous" ? DEMO_CONTINUOUS : DEMO_DISCRETE;
-  const demoSignal = useMemo(() => makeDemoSignal(mode, demoComponents), [demoComponents, mode]);
   const currentComponents = useMemo(() => extractComponents(spectrum, signal, mode), [mode, signal, spectrum]);
-  const components = source === "demo" ? demoComponents : currentComponents;
-  const sourceSignal = source === "demo" ? demoSignal : signal;
-  const maxAmplitude = Math.max(0.05, ...components.map((component) => component.amplitude));
-  const maxSourceValue = Math.max(0.05, ...sourceSignal.filter((point) => Number.isFinite(point.y)).map((point) => Math.abs(point.y)));
-  const selected = components[clamp(selectedIndex, 0, Math.max(components.length - 1, 0))] ?? demoComponents[0];
+  const components = source === "demo" ? demoDrafts[mode] : currentDrafts[mode];
   const activeView = nearestView(orbit);
-  const currentIsSparse = source === "current" && components.length < 2;
+  const displayAmplitudeLimit = Math.max(AMPLITUDE_FLOOR, Math.ceil(Math.max(0, ...components.map((component) => component.amplitude)) * 2) / 2);
+  const frequencyCeiling = mode === "discrete" ? Math.PI : Math.max(2 * Math.PI, ...components.map((component) => component.omega)) * 1.12;
+  const selected = components[selectedIndex] ?? null;
+  const selectedColor = SLICE_COLORS[selectedIndex % SLICE_COLORS.length];
+  const componentCount = components.length;
 
   useEffect(() => {
-    setSelectedIndex((index) => clamp(index, 0, Math.max(components.length - 1, 0)));
-  }, [components.length]);
+    setSelectedIndex((index) => clamp(index, 0, Math.max(componentCount - 1, 0)));
+  }, [componentCount]);
+
+  useEffect(() => {
+    if (previousMode.current === mode) return;
+    previousMode.current = mode;
+    setSelectedIndex(0);
+    if (source === "current") setCurrentDrafts((drafts) => ({ ...drafts, [mode]: cloneComponents(currentComponents) }));
+  }, [currentComponents, mode, source]);
 
   const setOrbitSafely = (next: Orbit) => {
     orbitRef.current = next;
     setOrbit(next);
   };
   const selectView = (view: ViewId) => setOrbitSafely({ yaw: VIEW_PRESETS[view].yaw, pitch: VIEW_PRESETS[view].pitch });
-  const selectSlice = (index: number) => setSelectedIndex(clamp(index, 0, Math.max(components.length - 1, 0)));
+  const selectSlice = (index: number) => setSelectedIndex(clamp(index, 0, Math.max(componentCount - 1, 0)));
+  const selectSource = (next: SliceSource) => {
+    if (next === "current" && source !== "current") setCurrentDrafts((drafts) => ({ ...drafts, [mode]: cloneComponents(currentComponents) }));
+    setSource(next);
+    setSelectedIndex(0);
+  };
+  const updateAmplitude = (id: string, amplitude: number) => {
+    const update = (items: FrequencyComponent[]) => items.map((component) => component.id === id ? { ...component, amplitude, magnitude: amplitude } : component);
+    if (source === "demo") setDemoDrafts((drafts) => ({ ...drafts, [mode]: update(drafts[mode]) }));
+    else setCurrentDrafts((drafts) => ({ ...drafts, [mode]: update(drafts[mode]) }));
+  };
+  const addComponent = () => {
+    if (componentCount >= 8) return;
+    const component: FrequencyComponent = {
+      id: `custom-${mode}-${Date.now()}-${componentCount}`,
+      omega: nextOmega(components, mode),
+      amplitude: 0.5,
+      phase: 0,
+      magnitude: 0.5,
+    };
+    if (source === "demo") setDemoDrafts((drafts) => ({ ...drafts, [mode]: [...drafts[mode], component].sort((left, right) => left.omega - right.omega) }));
+    else setCurrentDrafts((drafts) => ({ ...drafts, [mode]: [...drafts[mode], component].sort((left, right) => left.omega - right.omega) }));
+    setSelectedIndex([...components, component].sort((left, right) => left.omega - right.omega).findIndex((item) => item.id === component.id));
+  };
 
   const beginDrag = (event: PointerEvent<HTMLDivElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -191,7 +212,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     const deltaX = event.clientX - drag.x;
     const deltaY = event.clientY - drag.y;
     if (Math.abs(deltaX) + Math.abs(deltaY) > 4) drag.moved = true;
-    setOrbitSafely({ yaw: clamp(drag.orbit.yaw + deltaX * 0.32, -98, 8), pitch: clamp(drag.orbit.pitch - deltaY * 0.2, -28, 18) });
+    setOrbitSafely({ yaw: clamp(drag.orbit.yaw + deltaX * 0.28, -56, 14), pitch: clamp(drag.orbit.pitch - deltaY * 0.2, -26, 18) });
   };
   const finishDrag = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
@@ -211,20 +232,21 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     setCubeScale((current) => clamp(current - event.deltaY * 0.001, 0.76, 1.22));
   };
 
-  const sliceDepth = (index: number) => -112 + (index * 224) / Math.max(components.length - 1, 1);
+  const sliceGap = componentCount > 1 ? clamp(232 / (componentCount - 1), 28, 48) : 0;
+  const sliceDepth = (index: number) => (index - (componentCount - 1) / 2) * sliceGap;
   const cubeTransform = `scale(${cubeScale}) rotateX(${orbit.pitch}deg) rotateY(${orbit.yaw}deg)`;
-  const sourcePath = pointPath(sourceSignal, CUBE_WIDTH, CUBE_HEIGHT, maxSourceValue);
+  const sourceLabel = source === "demo" ? "可编辑示范分量" : "当前信号的主分量副本";
 
   return <section className="workspace cube-workspace" aria-label="傅里叶分量立方体">
     <div className="cube-intro">
       <div>
         <p>独立可视化工具</p>
-        <h1>傅里叶分量立方体</h1>
-        <span>X 轴为时间，向内的每个平行切片是一条主要频率分量；旋转至右侧 Y 面即可看到其对应的频率峰与幅度。</span>
+        <h1>共面时频分量立方体</h1>
+        <span>一张切片就是一个分量：左侧画 Aₖcos(ωₖt+φₖ)，右侧画同一分量的频谱峰。两者使用同一张平面、同一颜色和同一幅度值。</span>
       </div>
       <div className="cube-source-toggle" role="group" aria-label="立方体数据源">
-        <button className={source === "demo" ? "mini-tab active" : "mini-tab"} onClick={() => { setSource("demo"); setSelectedIndex(1); }}>示范多分量</button>
-        <button className={source === "current" ? "mini-tab active" : "mini-tab"} onClick={() => { setSource("current"); setSelectedIndex(0); }}>当前 x({mode === "continuous" ? "t" : "n"})</button>
+        <button className={source === "demo" ? "mini-tab active" : "mini-tab"} onClick={() => selectSource("demo")}>示范可编辑分量</button>
+        <button className={source === "current" ? "mini-tab active" : "mini-tab"} onClick={() => selectSource("current")}>导入当前信号</button>
       </div>
     </div>
 
@@ -232,101 +254,102 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
       <article className="cube-card cube-visual-card">
         <div className="cube-card-heading">
           <div><p>可拖动旋转</p><h2>{VIEW_PRESETS[activeView].label}</h2></div>
-          <span className="domain-pill">{components.length} 个主要正频率分量</span>
+          <span className="domain-pill">{componentCount} 个可编辑分量</span>
         </div>
         <div className="cube-view-controls" role="group" aria-label="立方体预设视角">
           {(Object.keys(VIEW_PRESETS) as ViewId[]).map((view) => <button key={view} className={activeView === view ? "mini-tab active" : "mini-tab"} onClick={() => selectView(view)}>{VIEW_PRESETS[view].label}</button>)}
-          <span>拖动旋转 · 滚轮缩放 · 双击总览</span>
+          <span>拖动旋转 · 滚轮缩放 · 双击回到总览</span>
         </div>
         <div className="cube-stage" aria-describedby="cube-instructions" onWheel={zoomCube}>
-          <div className="cube-stage-hud" aria-hidden="true"><span>{VIEW_PRESETS[activeView].hint}</span><b>{source === "demo" ? "演示混合信号" : "当前编辑信号"}</b></div>
+          <div className="cube-stage-hud" aria-hidden="true"><span>{VIEW_PRESETS[activeView].hint}</span><b>{sourceLabel}</b></div>
           <div className="tf-cube-wrap">
-          <div
-            className={`tf-cube ${dragging ? "dragging" : ""}`}
-            style={{ transform: cubeTransform }}
-            tabIndex={0}
-            role="group"
-            aria-label="可旋转的时域频域分量立方体。方向键切换分量，数字 1、2、3 切换时域、总览和频域视图。"
-            onPointerDown={beginDrag}
-            onPointerMove={moveDrag}
-            onPointerUp={finishDrag}
-            onPointerCancel={finishDrag}
-            onDoubleClick={() => selectView("overview")}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft" || event.key === "ArrowDown") { event.preventDefault(); selectSlice(selectedIndex - 1); }
-              if (event.key === "ArrowRight" || event.key === "ArrowUp") { event.preventDefault(); selectSlice(selectedIndex + 1); }
-              if (event.key === "1") selectView("time");
-              if (event.key === "2") selectView("overview");
-              if (event.key === "3") selectView("frequency");
-            }}
-          >
-            <div className="cube-face cube-face-back" aria-hidden="true" />
-            <div className="cube-face cube-face-left" aria-hidden="true" />
-            <div className="cube-face cube-face-top" aria-hidden="true" />
-            <div className="cube-face cube-face-bottom" aria-hidden="true" />
-            {components.map((component, index) => {
-              const selectedSlice = index === selectedIndex;
-              const color = SLICE_COLORS[index % SLICE_COLORS.length];
-              return <svg key={component.id} className={`cube-slice-plane ${selectedSlice ? "selected" : ""}`} style={{ transform: `translateZ(${sliceDepth(index)}px)`, color, opacity: selectedSlice ? 1 : 0.22 }} viewBox={`0 0 ${CUBE_WIDTH} ${CUBE_HEIGHT}`} aria-hidden="true">
-                <rect className="slice-plane-fill" x="8" y="18" width={CUBE_WIDTH - 16} height={CUBE_HEIGHT - 36} rx="3" />
-                <line className="slice-axis" x1="20" y1={CUBE_HEIGHT / 2} x2={CUBE_WIDTH - 20} y2={CUBE_HEIGHT / 2} />
-                <path className="slice-wave" d={componentPath(component, mode, CUBE_WIDTH, CUBE_HEIGHT, maxAmplitude)} />
-                {selectedSlice && <><text className="slice-caption" x="25" y="42">k{index + 1} · A={round(component.amplitude, 3)}</text><text className="slice-caption slice-caption-right" x={CUBE_WIDTH - 25} y="42" textAnchor="end">{componentFrequency(component, mode, true)}</text></>}
-              </svg>;
-            })}
-            <div className="cube-face cube-face-time">
-              <svg viewBox={`0 0 ${CUBE_WIDTH} ${CUBE_HEIGHT}`} aria-hidden="true">
-                <rect className="front-grid-fill" x="8" y="18" width={CUBE_WIDTH - 16} height={CUBE_HEIGHT - 36} rx="3" />
-                {Array.from({ length: 7 }, (_, index) => <line key={`tv-${index}`} className="cube-grid-line" x1={20 + ((CUBE_WIDTH - 40) * index) / 6} x2={20 + ((CUBE_WIDTH - 40) * index) / 6} y1="28" y2={CUBE_HEIGHT - 28} />)}
-                {Array.from({ length: 5 }, (_, index) => <line key={`th-${index}`} className="cube-grid-line" x1="20" x2={CUBE_WIDTH - 20} y1={34 + ((CUBE_HEIGHT - 68) * index) / 4} y2={34 + ((CUBE_HEIGHT - 68) * index) / 4} />)}
-                <line className="slice-axis source-axis" x1="20" y1={CUBE_HEIGHT / 2} x2={CUBE_WIDTH - 20} y2={CUBE_HEIGHT / 2} />
-                <path className="source-wave" d={sourcePath} />
-                <text className="face-title" x="24" y="45">X 面 · 合成时域 x({mode === "continuous" ? "t" : "n"})</text>
-                <text className="face-axis" x={CUBE_WIDTH - 25} y={CUBE_HEIGHT - 24} textAnchor="end">{mode === "continuous" ? "t" : "n"}</text>
-              </svg>
+            <div
+              className={`tf-cube ${dragging ? "dragging" : ""} ${activeView === "time" ? "time-focus" : ""} ${activeView === "frequency" ? "frequency-focus" : ""}`}
+              style={{ transform: cubeTransform }}
+              tabIndex={0}
+              role="group"
+              aria-label="可旋转的共面时频分量立方体。每张切片左侧是时域波形，右侧是同一分量的频谱峰。方向键切换分量，数字 1、2、3 切换视图。"
+              onPointerDown={beginDrag}
+              onPointerMove={moveDrag}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
+              onDoubleClick={() => selectView("overview")}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft" || event.key === "ArrowDown") { event.preventDefault(); selectSlice(selectedIndex - 1); }
+                if (event.key === "ArrowRight" || event.key === "ArrowUp") { event.preventDefault(); selectSlice(selectedIndex + 1); }
+                if (event.key === "1") selectView("time");
+                if (event.key === "2") selectView("overview");
+                if (event.key === "3") selectView("frequency");
+              }}
+            >
+              <div className="cube-face cube-face-back" aria-hidden="true" />
+              <div className="cube-face cube-face-left" aria-hidden="true" />
+              <div className="cube-face cube-face-top" aria-hidden="true" />
+              <div className="cube-face cube-face-bottom" aria-hidden="true" />
+              <div className="cube-face cube-face-front" aria-hidden="true" />
+              {components.map((component, index) => {
+                const selectedSlice = index === selectedIndex;
+                const color = SLICE_COLORS[index % SLICE_COLORS.length];
+                const frequencyX = 334 + clamp(component.omega / Math.max(frequencyCeiling, 1e-8), 0, 1) * 150;
+                const peakY = 246 - (component.amplitude / displayAmplitudeLimit) * 154;
+                return <svg key={component.id} data-slice-index={index} className={`cube-slice-plane ${selectedSlice ? "selected" : ""}`} style={{ transform: `translateZ(${sliceDepth(index)}px)`, color, opacity: selectedSlice ? 1 : 0.34 }} viewBox={`0 0 ${CUBE_WIDTH} ${CUBE_HEIGHT}`} role="img" aria-label={`切片 k${index + 1}：时域分量与对应频谱峰`}>
+                  <rect className="slice-plane-fill" x="8" y="18" width={CUBE_WIDTH - 16} height={CUBE_HEIGHT - 36} rx="4" />
+                  <g className="slice-time-region">
+                    <rect className="slice-time-panel" x="18" y="32" width="270" height="224" rx="3" />
+                    {Array.from({ length: 4 }, (_, gridIndex) => <line key={`time-h-${gridIndex}`} className="slice-grid" x1="22" x2="284" y1={76 + gridIndex * 54} y2={76 + gridIndex * 54} />)}
+                    {Array.from({ length: 5 }, (_, gridIndex) => <line key={`time-v-${gridIndex}`} className="slice-grid" x1={22 + gridIndex * 65.5} x2={22 + gridIndex * 65.5} y1="34" y2="256" />)}
+                    <line className="slice-axis" x1="22" y1="157" x2="284" y2="157" />
+                    <path className="slice-wave" d={componentPath(component, mode, displayAmplitudeLimit)} />
+                    <text className="slice-region-title" x="26" y="53">时域 xₖ({mode === "continuous" ? "t" : "n"})</text>
+                    <text className="slice-axis-label" x="280" y="247" textAnchor="end">{mode === "continuous" ? "t" : "n"}</text>
+                  </g>
+                  <line className="slice-divider" x1="308" x2="308" y1="35" y2="255" />
+                  <g className="slice-spectrum-region">
+                    <rect className="slice-spectrum-panel" x="324" y="32" width="178" height="224" rx="3" />
+                    <line className="slice-axis" x1="334" y1="246" x2="490" y2="246" />
+                    <line className="slice-spectrum-stem" x1={frequencyX} x2={frequencyX} y1="246" y2={peakY} />
+                    <circle className="slice-spectrum-dot" cx={frequencyX} cy={peakY} r={selectedSlice ? 6 : 4} />
+                    <text className="slice-region-title" x="334" y="53">频域 |Xₖ(ω)|</text>
+                    <text className="slice-axis-label" x="334" y="247">0</text>
+                    <text className="slice-axis-label" x="490" y="247" textAnchor="end">ω</text>
+                    <text className="slice-component-tag" x="334" y="78">k{index + 1}</text>
+                    {selectedSlice && <><text className="slice-spectrum-value" x={frequencyX} y={peakY - 16} textAnchor="middle">A {round(component.amplitude, 2)}</text><text className="slice-spectrum-frequency" x={frequencyX} y={peakY - 31} textAnchor="middle">{componentFrequency(component, mode, true)}</text></>}
+                  </g>
+                  <path className="slice-correspondence-line" d={`M 288 157 C 302 157, 312 157, 324 157`} />
+                  <text className="slice-caption" x="26" y="283">k{index + 1} · {componentFrequency(component, mode, true)} · A={round(component.amplitude, 3)}</text>
+                  {selectedSlice && <rect className="selected-slice-outline" x="8" y="18" width={CUBE_WIDTH - 16} height={CUBE_HEIGHT - 36} rx="4" />}
+                </svg>;
+              })}
             </div>
-            <div className="cube-face cube-face-frequency">
-              <svg viewBox={`0 0 ${CUBE_DEPTH} ${CUBE_HEIGHT}`} aria-hidden="true">
-                <rect className="frequency-face-fill" x="8" y="18" width={CUBE_DEPTH - 16} height={CUBE_HEIGHT - 36} rx="3" />
-                <line className="slice-axis frequency-axis" x1="27" y1={CUBE_HEIGHT - 43} x2={CUBE_DEPTH - 20} y2={CUBE_HEIGHT - 43} />
-                <text className="face-title frequency-face-title" x="24" y="43">Y 面 · |X(ω)|</text>
-                <text className="face-axis" x="24" y={CUBE_HEIGHT - 18}>正频率峰</text>
-                {components.map((component, index) => {
-                  const selectedSlice = index === selectedIndex;
-                  const color = SLICE_COLORS[index % SLICE_COLORS.length];
-                  const x = components.length === 1 ? CUBE_DEPTH / 2 : 32 + (index * (CUBE_DEPTH - 62)) / (components.length - 1);
-                  const y = CUBE_HEIGHT - 43 - (component.amplitude / maxAmplitude) * 172;
-                  return <g key={component.id} data-slice-index={index} className={`frequency-peak ${selectedSlice ? "selected" : ""}`} style={{ color }}>
-                    <line x1={x} x2={x} y1={CUBE_HEIGHT - 43} y2={y} />
-                    <circle cx={x} cy={y} r={selectedSlice ? 6 : 4} />
-                    <text x={x} y={CUBE_HEIGHT - 28} textAnchor="middle">k{index + 1}</text>
-                    {selectedSlice && <><text className="peak-value" x={x} y={y - 12} textAnchor="middle">A {round(component.amplitude, 2)}</text><text className="peak-frequency" x={x} y={y - 28} textAnchor="middle">{componentFrequency(component, mode, true)}</text></>}
-                  </g>;
-                })}
-              </svg>
-            </div>
-          </div>
           </div>
         </div>
-        <p id="cube-instructions" className="cube-instructions">拖到右侧可观察 Y 频域面；点击频谱峰或下方分量可同步高亮。键盘方向键可切换当前分量。</p>
+        <p id="cube-instructions" className="cube-instructions">每一层是同一张物理平面：左侧波形与右侧谱峰不会随旋转发生错位。点击层、右侧分量卡或使用方向键可同步选择。</p>
       </article>
 
       <aside className="cube-data-panel">
-        <div className="cube-data-heading"><p>当前对应关系</p><h2>切片 k{selectedIndex + 1} ↔ 频谱峰</h2></div>
-        <div className="selected-component-card" style={{ "--slice-color": SLICE_COLORS[selectedIndex % SLICE_COLORS.length] } as CSSProperties}>
-          <span className="selected-component-dot" />
-          <div><strong>A·cos(ωt + φ)</strong><code>{componentFrequency(selected, mode)}</code></div>
+        <div className="cube-data-heading"><p>当前对应关系</p><h2>{selected ? `切片 k${selectedIndex + 1}：时域 ↔ 频域` : "尚无可编辑分量"}</h2></div>
+        {selected ? <>
+          <div className="selected-component-card" style={{ "--slice-color": selectedColor } as CSSProperties}>
+            <span className="selected-component-dot" />
+            <div><strong>A·cos(ωt + φ)</strong><code>{componentFrequency(selected, mode)}</code></div>
+          </div>
+          <dl className="component-metrics">
+            <div><dt>幅度 A</dt><dd>{round(selected.amplitude, 4)}</dd></div>
+            <div><dt>角频率</dt><dd>{round(selected.omega, 4)} {mode === "continuous" ? "rad/s" : "rad/sample"}</dd></div>
+            <div><dt>相位 φ</dt><dd>{round(selected.phase, 4)} rad</dd></div>
+            <div><dt>数据源</dt><dd>{source === "demo" ? "示范分量" : "导入后副本"}</dd></div>
+          </dl>
+        </> : <p className="cube-warning">当前信号没有检测到显著正频率分量。可直接新增一个分量，或切换至示范数据。</p>}
+        <div className="component-editor">
+          <div className="component-editor-heading"><span>分量幅度（实时）</span><button className="add-component" type="button" disabled={componentCount >= 8} onClick={addComponent}>＋ 增加分量</button></div>
+          {components.map((component, index) => <div key={component.id} className={index === selectedIndex ? "component-editor-row selected" : "component-editor-row"} style={{ "--slice-color": SLICE_COLORS[index % SLICE_COLORS.length] } as CSSProperties}>
+            <button type="button" className="component-editor-select" onClick={() => selectSlice(index)}><b>k{index + 1}</b><span>{componentFrequency(component, mode, true)}</span></button>
+            <input aria-label={`分量 k${index + 1} 的幅度`} type="range" min="0" max={Math.max(AMPLITUDE_FLOOR, Math.ceil(displayAmplitudeLimit * 2) / 2)} step="0.01" value={component.amplitude} onChange={(event) => updateAmplitude(component.id, Number(event.target.value))} />
+            <output>A {round(component.amplitude, 2)}</output>
+          </div>)}
         </div>
-        <dl className="component-metrics">
-          <div><dt>幅度 A</dt><dd>{round(selected.amplitude, 4)}</dd></div>
-          <div><dt>角频率</dt><dd>{round(selected.omega, 4)} {mode === "continuous" ? "rad/s" : "rad/sample"}</dd></div>
-          <div><dt>相位 φ</dt><dd>{round(selected.phase, 4)} rad</dd></div>
-          <div><dt>数据源</dt><dd>{source === "demo" ? "示范混合信号" : "当前表达式"}</dd></div>
-        </dl>
-        <label className="slice-picker">当前切片 <output>k{selectedIndex + 1} / {components.length}</output><input type="range" min="0" max={Math.max(components.length - 1, 0)} step="1" value={selectedIndex} onChange={(event) => selectSlice(Number(event.target.value))} /></label>
-        <div className="slice-chip-row" aria-label="选择频率分量">{components.map((component, index) => <button key={component.id} className={index === selectedIndex ? "slice-chip active" : "slice-chip"} style={{ "--slice-color": SLICE_COLORS[index % SLICE_COLORS.length] } as CSSProperties} onClick={() => selectSlice(index)}><b>k{index + 1}</b><span>{componentFrequency(component, mode, true)}</span></button>)}</div>
-        {currentIsSparse && <p className="cube-warning">当前信号只检测到 {components.length} 个显著正频率分量。切换到“示范多分量”可查看完整的多层切片关系。</p>}
-        <p className="cube-semantic-note">数学约定：前方为合成信号；向内的平面为主要正频率分量 Aₖcos(ωₖt+φₖ)，右面峰值与切片 k 一一对应。</p>
+        {componentCount > 0 && <label className="slice-picker">当前切片 <output>k{selectedIndex + 1} / {componentCount}</output><input type="range" min="0" max={componentCount - 1} step="1" value={selectedIndex} onChange={(event) => selectSlice(Number(event.target.value))} /></label>}
+        <p className="cube-semantic-note">“导入当前信号”会复制主频率分量供此立方体编辑；滑块与新增分量实时改变这里的时域波形和同层频谱峰，不会改写顶部的函数表达式。</p>
       </aside>
     </div>
   </section>;
