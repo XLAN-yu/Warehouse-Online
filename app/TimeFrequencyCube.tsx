@@ -17,6 +17,8 @@ type FrequencyComponent = {
 const CUBE_WIDTH = 520;
 const CUBE_HEIGHT = 300;
 const CUBE_DEPTH = 340;
+const SIGNAL_AXIS_Y = CUBE_HEIGHT / 2;
+const FREQUENCY_PEAK_HEIGHT = 90;
 const AMPLITUDE_FLOOR = 1.5;
 const SLICE_COLORS = ["#45e7ff", "#a895ff", "#54e4bc", "#ff9cda", "#ffa968", "#6bb6ff", "#e4d66a", "#ff7f9a"];
 
@@ -107,7 +109,7 @@ function componentPath(component: FrequencyComponent, mode: DomainMode, amplitud
   return Array.from({ length: count }, (_, index) => {
     const time = start + ((end - start) * index) / Math.max(count - 1, 1);
     const x = 26 + (index / Math.max(count - 1, 1)) * (CUBE_WIDTH - 64);
-    const y = CUBE_HEIGHT / 2 - (componentValue(component, time) / Math.max(amplitudeScale, 1e-8)) * 96;
+    const y = SIGNAL_AXIS_Y - (componentValue(component, time) / Math.max(amplitudeScale, 1e-8)) * 96;
     return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
 }
@@ -242,7 +244,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
       <div>
         <p>独立可视化工具</p>
         <h1>时域切片 · 频域侧视</h1>
-        <span>时域由多张平行切片组成；右侧 Y 面是一张与切片垂直的频域墙。同色 k 标记和相同深度坐标，把每个时域分量与它的频谱峰对应起来。</span>
+        <span>时域由多张平行切片组成；右侧 Y 面是一张与切片垂直的半透明频域墙。同色 k 标记、相同深度坐标和同一零幅度轴高度，把每个时域分量与它的频谱峰对应起来。</span>
       </div>
       <div className="cube-source-toggle" role="group" aria-label="立方体数据源">
         <button className={source === "demo" ? "mini-tab active" : "mini-tab"} onClick={() => selectSource("demo")}>示范可编辑分量</button>
@@ -295,7 +297,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                   <rect className="slice-plane-fill time-slice-fill" x="12" y="18" width={CUBE_WIDTH - 64} height={CUBE_HEIGHT - 36} rx="4" />
                   {Array.from({ length: 4 }, (_, gridIndex) => <line key={`time-h-${gridIndex}`} className="time-slice-grid" x1="28" x2={timeRight} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
                   {Array.from({ length: 6 }, (_, gridIndex) => <line key={`time-v-${gridIndex}`} className="time-slice-grid" x1={28 + gridIndex * ((timeRight - 28) / 5)} x2={28 + gridIndex * ((timeRight - 28) / 5)} y1="38" y2="262" />)}
-                  <line className="slice-axis" x1="28" y1={CUBE_HEIGHT / 2} x2={timeRight} y2={CUBE_HEIGHT / 2} />
+                  <line className="slice-axis" x1="28" y1={SIGNAL_AXIS_Y} x2={timeRight} y2={SIGNAL_AXIS_Y} />
                   <path className="slice-wave" d={componentPath(component, mode, displayAmplitudeLimit)} />
                   <line className="slice-depth-hinge" x1={timeRight} x2={timeRight} y1="39" y2="261" />
                   {selectedSlice && <>
@@ -310,21 +312,21 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
               <div className="cube-face cube-face-frequency cube-frequency-wall">
                 <svg viewBox={`0 0 ${CUBE_DEPTH} ${CUBE_HEIGHT}`} role="img" aria-label="右侧频域 Y 面；每个同色频谱峰对应相同深度的时域切片">
                   <rect className="frequency-face-fill" x="8" y="18" width={CUBE_DEPTH - 16} height={CUBE_HEIGHT - 36} rx="4" />
-                  {Array.from({ length: 4 }, (_, gridIndex) => <line key={`frequency-h-${gridIndex}`} className="frequency-wall-grid" x1="22" x2={CUBE_DEPTH - 22} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
+                  {Array.from({ length: 5 }, (_, gridIndex) => <line key={`frequency-h-${gridIndex}`} className="frequency-wall-grid" x1="22" x2={CUBE_DEPTH - 22} y1={54 + gridIndex * 48} y2={54 + gridIndex * 48} />)}
                   {Array.from({ length: 5 }, (_, gridIndex) => <line key={`frequency-v-${gridIndex}`} className="frequency-wall-grid" x1={22 + gridIndex * ((CUBE_DEPTH - 44) / 4)} x2={22 + gridIndex * ((CUBE_DEPTH - 44) / 4)} y1="38" y2="262" />)}
-                  <line className="frequency-wall-axis" x1="22" x2={CUBE_DEPTH - 22} y1="246" y2="246" />
+                  <line className="frequency-wall-axis" x1="22" x2={CUBE_DEPTH - 22} y1={SIGNAL_AXIS_Y} y2={SIGNAL_AXIS_Y} />
                   <text className="frequency-face-title" x="24" y="53">Y 面 · |Xₖ(ω)|</text>
                   <text className="frequency-wall-axis-label" x="22" y="267">切片深度 k · 峰频率见标签</text>
                   {components.map((component, index) => {
                     const selectedSlice = index === selectedIndex;
                     const color = SLICE_COLORS[index % SLICE_COLORS.length];
                     const frequencyX = CUBE_DEPTH / 2 - sliceDepth(index);
-                    const peakY = 246 - (component.amplitude / displayAmplitudeLimit) * 154;
+                    const peakY = SIGNAL_AXIS_Y - (component.amplitude / displayAmplitudeLimit) * FREQUENCY_PEAK_HEIGHT;
                     return <g key={component.id} data-slice-index={index} className={`frequency-wall-peak ${selectedSlice ? "selected" : ""}`} style={{ color }}>
-                      <line className="frequency-depth-guide" x1={frequencyX} x2={frequencyX} y1="63" y2="246" />
-                      <line className="frequency-peak-stem" x1={frequencyX} x2={frequencyX} y1="246" y2={peakY} />
+                      <line className="frequency-depth-guide" x1={frequencyX} x2={frequencyX} y1="42" y2={SIGNAL_AXIS_Y} />
+                      <line className="frequency-peak-stem" x1={frequencyX} x2={frequencyX} y1={SIGNAL_AXIS_Y} y2={peakY} />
                       <circle className="frequency-peak-dot" cx={frequencyX} cy={peakY} r={selectedSlice ? 6 : 4.2} />
-                      <text className="frequency-slice-tag" x={frequencyX} y="268" textAnchor="middle">k{index + 1}</text>
+                      <text className="frequency-slice-tag" x={frequencyX} y={SIGNAL_AXIS_Y + 20} textAnchor="middle">k{index + 1}</text>
                       {selectedSlice && <><text className="frequency-peak-value" x={frequencyX} y={peakY - 17} textAnchor="middle">A {round(component.amplitude, 2)}</text><text className="frequency-peak-frequency" x={frequencyX} y={peakY - 32} textAnchor="middle">{componentFrequency(component, mode, true)}</text></>}
                     </g>;
                   })}
@@ -333,7 +335,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
             </div>
           </div>
         </div>
-        <p id="cube-instructions" className="cube-instructions">时域切片与右侧 Y 面互相垂直；同色 k 标记和相同深度坐标对应同一分量。点击切片、频谱峰、右侧分量卡或使用方向键可同步选择。</p>
+        <p id="cube-instructions" className="cube-instructions">时域切片与半透明右侧 Y 面互相垂直，并在同一零幅度轴高度相交；同色 k 标记和相同深度坐标对应同一分量。点击切片、频谱峰、右侧分量卡或使用方向键可同步选择。</p>
       </article>
 
       <aside className="cube-data-panel">
