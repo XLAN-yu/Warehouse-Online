@@ -104,6 +104,7 @@ button { cursor: pointer; }
 .plot-pink { color: #ff6ac9; stroke: #ff6ac9; fill: #ff6ac9; }
 .plot-violet { color: #9a8dff; stroke: #9a8dff; fill: #9a8dff; }
 .plot-muted { color: #6d7788; stroke: #6d7788; fill: #6d7788; opacity: .7; filter: none; }
+.signal-line.plot-cyan, .signal-line.plot-pink, .signal-line.plot-violet, .signal-line.plot-muted { fill: none; }
 .spectrum-area { fill: rgba(255, 106, 201, .13); stroke: none; }
 .spectrum-divider { stroke: rgba(166, 186, 216, .18); stroke-width: 1; }
 .phase-line { fill: none; stroke: #9a8dff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 3px #9a8dff); }
@@ -202,6 +203,12 @@ button { cursor: pointer; }
 /* 正交时频结构：平行的 XY 时域切片，配一张固定在右侧的 YZ 频域墙。 */
 .cube-face { pointer-events: none; }
 .cube-face-front { transform: translateZ(170px); background: transparent; }
+.cube-composite-face { display: block; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.composite-face-fill { fill: rgba(69, 231, 255, .025); stroke: rgba(120, 235, 249, .42); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.composite-grid { stroke: rgba(158, 228, 240, .08); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.composite-axis { stroke: rgba(211, 247, 255, .64); stroke-width: 1.35; vector-effect: non-scaling-stroke; }
+.composite-wave { fill: none; stroke: #d8fbff; stroke-width: 3.8; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 7px rgba(78, 229, 250, .9)); vector-effect: non-scaling-stroke; }
+.composite-title { fill: rgba(221, 250, 255, .88); font-family: var(--font-geist-mono), Consolas, monospace; font-size: 11px; font-weight: 650; letter-spacing: .015em; }
 .cube-slice-plane { pointer-events: auto; cursor: pointer; transform-style: preserve-3d; }
 .cube-time-slice { overflow: visible; }
 .time-slice-fill { fill: rgba(8, 23, 39, .07); stroke: color-mix(in srgb, currentColor 72%, rgba(107, 202, 235, .28)); }
@@ -234,6 +241,7 @@ button { cursor: pointer; }
 .tf-cube.frequency-focus .cube-time-slice.selected { opacity: .82 !important; }
 .tf-cube.frequency-focus .cube-time-slice .slice-axis { stroke: rgba(212, 244, 255, .72); }
 .tf-cube.frequency-focus .cube-time-slice.selected .slice-axis { stroke: color-mix(in srgb, currentColor 72%, #e8fbff); stroke-width: 1.5; filter: drop-shadow(0 0 3px currentColor); }
+.tf-cube.frequency-focus .cube-composite-face { opacity: .58; }
 .tf-cube.frequency-focus .cube-frequency-wall { opacity: 1; }
 .component-editor { display: grid; gap: 7px; margin-top: 14px; padding: 11px; border: 1px solid rgba(166, 186, 216, .11); border-radius: 10px; background: rgba(4, 10, 19, .27); }
 .component-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #aab9cf; font-size: 12px; }

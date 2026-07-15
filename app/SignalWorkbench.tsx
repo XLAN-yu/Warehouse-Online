@@ -78,26 +78,24 @@ function AxisGrid({ label }: { label: string }) {
   </>;
 }
 
-function SignalPlot({ id, label, points, mode, zoom, accent, markerIndex, markerLabel, activeUntil, onPointerDown, onPointerMove, onPointerUp }: {
+function SignalPlot({ id, label, points, mode, zoom, accent, markerIndex, markerLabel, onPointerDown, onPointerMove, onPointerUp }: {
   id: string; label: string; points: Point[]; mode: DomainMode; zoom: number; accent: "cyan" | "pink" | "violet";
-  markerIndex?: number; markerLabel?: string; activeUntil?: number;
+  markerIndex?: number; markerLabel?: string;
   onPointerDown?: (event: PointerEvent<SVGSVGElement>) => void; onPointerMove?: (event: PointerEvent<SVGSVGElement>) => void; onPointerUp?: (event: PointerEvent<SVGSVGElement>) => void;
 }) {
   const maximum = normalizeRange(points); const clipId = `clip-${id}`; const colorClass = `plot-${accent}`;
   const markerX = markerIndex === undefined ? 0 : chartX(markerIndex, points.length, zoom);
   const markerY = markerIndex === undefined ? 0 : chartY(points[markerIndex]?.y ?? 0, maximum);
-  const active = activeUntil === undefined ? undefined : points.map((_, index) => index <= activeUntil);
   return <svg className={`signal-plot ${onPointerDown ? "draggable-plot" : ""}`} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={label} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
     <defs><clipPath id={clipId}><rect x={PAD.left} y={PAD.top} width={WIDTH - PAD.left - PAD.right} height={HEIGHT - PAD.top - PAD.bottom} /></clipPath></defs>
     <AxisGrid label={mode === "continuous" ? "t" : "n"} />
     <g clipPath={`url(#${clipId})`}>
       {mode === "continuous" ? <>
-        {active && <path className="signal-line plot-muted" d={seriesPath(points, zoom, maximum)} />}
-        <path className={`signal-line ${colorClass}`} d={seriesPath(points, zoom, maximum, active)} />
+        <path className={`signal-line ${colorClass}`} d={seriesPath(points, zoom, maximum)} />
       </> : points.map((point, index) => {
         if (!Number.isFinite(point.y)) return null;
-        const x = chartX(index, points.length, zoom); const y = chartY(point.y, maximum); const muted = active ? !active[index] : false;
-        return <g key={index} className={muted ? "plot-muted" : colorClass}><line className="stem" x1={x} x2={x} y1={HEIGHT / 2} y2={y} /><circle className="point" cx={x} cy={y} r="3.1" /></g>;
+        const x = chartX(index, points.length, zoom); const y = chartY(point.y, maximum);
+        return <g key={index} className={colorClass}><line className="stem" x1={x} x2={x} y1={HEIGHT / 2} y2={y} /><circle className="point" cx={x} cy={y} r="3.1" /></g>;
       })}
       {markerIndex !== undefined && <g className="result-marker"><line x1={markerX} x2={markerX} y1={PAD.top} y2={HEIGHT - PAD.bottom} /><circle className={`point ${colorClass}`} cx={markerX} cy={markerY} r="5" /></g>}
     </g>
@@ -178,12 +176,9 @@ export function SignalWorkbench() {
   const parsedInverse = useMemo(() => compileExpression(inverseExpression), [inverseExpression]);
   const parsedFirst = useMemo(() => compileExpression(firstExpression), [firstExpression]);
   const parsedSecond = useMemo(() => compileExpression(secondExpression), [secondExpression]);
-  const fallbackSignal = useMemo(() => compileExpression(expressionForPreset(preset, domainMode)), [domainMode, preset]);
-  const fallbackFirst = useMemo(() => compileExpression(expressionForPreset(firstPreset, domainMode)), [domainMode, firstPreset]);
-  const fallbackSecond = useMemo(() => compileExpression(expressionForPreset(secondPreset, domainMode)), [domainMode, secondPreset]);
-  const signalFn = parsedSignal.error ? fallbackSignal.fn : parsedSignal.fn;
-  const firstFn = parsedFirst.error ? fallbackFirst.fn : parsedFirst.fn;
-  const secondFn = parsedSecond.error ? fallbackSecond.fn : parsedSecond.fn;
+  const signalFn = parsedSignal.fn;
+  const firstFn = parsedFirst.fn;
+  const secondFn = parsedSecond.fn;
   const appliedShift = propertyId === "timeShift" && direction === "forward" && transformKind === "fourier" ? propertyShift : 0;
 
   const signal = useMemo(() => sampleSignal(signalFn, domainMode, sampleCount, appliedShift), [appliedShift, domainMode, sampleCount, signalFn]);
@@ -198,19 +193,21 @@ export function SignalWorkbench() {
 
   const firstSignal = useMemo(() => sampleSignal(firstFn, domainMode, sampleCount), [domainMode, firstFn, sampleCount]);
   const secondSignal = useMemo(() => sampleSignal(secondFn, domainMode, sampleCount), [domainMode, secondFn, sampleCount]);
-  const reversedSecond = useMemo(() => secondSignal.map((point, index) => ({ x: point.x, y: secondSignal[secondSignal.length - index - 1].y })), [secondSignal]);
+  const sampleStep = domainMode === "continuous" ? 8 / Math.max(sampleCount - 1, 1) : 1;
+  const reversedSecond = useMemo(() => secondSignal.map((point) => ({ x: point.x, y: secondFn(-point.x, "time", sampleStep) })), [sampleStep, secondFn, secondSignal]);
   const convolutionResult = useMemo(() => convolve(firstSignal, secondSignal, domainMode), [domainMode, firstSignal, secondSignal]);
   const shiftSamples = domainMode === "continuous" ? shift / (8 / Math.max(sampleCount - 1, 1)) : Math.round(shift);
   const resultMarker = clamp(Math.round((domainMode === "continuous" ? sampleCount - 1 : sampleCount) + shiftSamples), 0, convolutionResult.length - 1);
   const convolutionMaximum = normalizeRange([...firstSignal, ...secondSignal]);
   const overlayShift = domainMode === "continuous" ? (shift / 8) * (WIDTH - PAD.left - PAD.right) * timeZoom : (shift / sampleCount) * (WIDTH - PAD.left - PAD.right) * timeZoom;
   const overlapMask = useMemo(() => {
-    const threshold = normalizeRange(firstSignal) * .025; const secondThreshold = normalizeRange(reversedSecond) * .01;
-    return reversedSecond.map((point, index) => {
-      const firstIndex = Math.round(index + shiftSamples);
-      return firstIndex >= 0 && firstIndex < firstSignal.length && Math.abs(firstSignal[firstIndex].y) >= threshold && Math.abs(point.y) >= secondThreshold;
+    const firstStart = firstSignal[0]?.x ?? 0;
+    const firstEnd = firstSignal.at(-1)?.x ?? 0;
+    return reversedSecond.map((point) => {
+      const movedX = point.x + shift;
+      return Number.isFinite(point.y) && movedX >= firstStart && movedX <= firstEnd;
     });
-  }, [firstSignal, reversedSecond, shiftSamples]);
+  }, [firstSignal, reversedSecond, shift]);
 
   const selectedProperty = FOURIER_PROPERTIES.find((item) => item.id === propertyId) ?? FOURIER_PROPERTIES[0];
   const sourceExpressionError = direction === "inverse" && inverseSource === "formula" ? parsedInverse.error : parsedSignal.error;
@@ -273,7 +270,7 @@ export function SignalWorkbench() {
         <label className="expression-input">函数表达式 x({domainMode === "continuous" ? "t" : "n"})<input ref={expressionTarget === "time" ? timeInputRef : undefined} value={expression} onFocus={() => setExpressionTarget("time")} onChange={(event) => setExpression(event.target.value)} spellCheck="false" /></label>
         <label>变换<select value={transformKind} onChange={(event) => selectTransform(event.target.value as TransformKind)}><option value="fourier">傅里叶变换</option><option value="laplace">拉普拉斯变换</option><option value="z">Z 变换</option></select></label>
         <div className="direction-toggle" role="group" aria-label="变换方向"><button className={direction === "forward" ? "mini-tab active" : "mini-tab"} onClick={() => setDirection("forward")}>正变换</button><button disabled={transformKind !== "fourier"} className={direction === "inverse" ? "mini-tab active" : "mini-tab"} onClick={() => setDirection("inverse")}>逆变换</button></div>
-        <span className={sourceExpressionError ? "status-dot error" : "status-dot"}>{sourceExpressionError ?? `${sampleCount} 点自适应采样`}</span>
+        <span className={sourceExpressionError ? "status-dot error" : "status-dot"}>{sourceExpressionError ? `采样暂停：${sourceExpressionError}` : `${sampleCount} 点实时数值采样`}</span>
       </div>
       {direction === "inverse" && transformKind === "fourier" && <div className="inverse-row"><div className="direction-toggle" role="group" aria-label="逆变换频谱来源"><button className={inverseSource === "current" ? "mini-tab active" : "mini-tab"} onClick={() => setInverseSource("current")}>使用当前频谱</button><button className={inverseSource === "formula" ? "mini-tab active" : "mini-tab"} onClick={() => setInverseSource("formula")}>输入频域函数</button></div>{inverseSource === "formula" && <label className="expression-input inverse-expression">X({domainMode === "continuous" ? "ω" : "k"})<input ref={expressionTarget === "frequency" ? frequencyInputRef : undefined} value={inverseExpression} onFocus={() => setExpressionTarget("frequency")} onChange={(event) => setInverseExpression(event.target.value)} spellCheck="false" /></label>}</div>}
       <div className="shortcut-bar" aria-label="数学符号快捷输入">{SHORTCUTS.map(([label, token]) => <button key={label} type="button" onClick={() => insertShortcut(token)}>{label}</button>)}</div>
@@ -296,12 +293,12 @@ export function SignalWorkbench() {
         <label className="expression-input"><span className="cyan-text">x</span> 函数<input value={firstExpression} onChange={(event) => setFirstExpression(event.target.value)} spellCheck="false" /></label>
         <label>h({domainMode === "continuous" ? "t" : "n"})<select value={secondPreset} onChange={(event) => choosePreset(event.target.value, "second")}>{displayPresetOptions(domainMode)}</select></label>
         <label className="expression-input"><span className="pink-text">h</span> 函数<input value={secondExpression} onChange={(event) => setSecondExpression(event.target.value)} spellCheck="false" /></label>
-        <span className={convolutionError ? "status-dot error" : "status-dot"}>{convolutionError ?? "FFT 实时卷积"}</span>
+        <span className={convolutionError ? "status-dot error" : "status-dot"}>{convolutionError ? `卷积暂停：${convolutionError}` : "FFT 数值卷积"}</span>
       </div>
       <div className="shortcut-bar convolution-shortcuts" aria-label="数学符号快捷输入">{SHORTCUTS.slice(0, 12).map(([label, token]) => <button key={label} type="button" onClick={() => setFirstExpression((current) => `${current}${token}`)}>{label}</button>)}</div>
       <div className="plot-grid">
         <article className="plot-panel"><div className="plot-heading"><div><p>叠加输入</p><h2>拖动 h({domainMode === "continuous" ? "τ − t" : "k − n"})</h2></div><span className="domain-pill">{convolutionShiftLabel}</span></div><div className="convolution-stage"><SignalPlot id="convolution-first" label="卷积输入信号 x" points={firstSignal} mode={domainMode} zoom={timeZoom} accent="cyan" markerLabel="x" /><svg className="signal-plot signal-overlay draggable-plot" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} aria-label="可拖动的时间翻转卷积函数" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setDraggingConvolution(true); updateConvolutionShift(event); }} onPointerMove={draggingConvolution ? updateConvolutionShift : undefined} onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingConvolution(false); }} onPointerCancel={() => setDraggingConvolution(false)}><defs><clipPath id="clip-convolution-second"><rect x={PAD.left} y={PAD.top} width={WIDTH - PAD.left - PAD.right} height={HEIGHT - PAD.top - PAD.bottom} /></clipPath></defs><g clipPath="url(#clip-convolution-second)" transform={`translate(${overlayShift} 0)`}><path className="signal-line plot-muted" d={seriesPath(reversedSecond, timeZoom, convolutionMaximum)} /><path className="signal-line plot-pink" d={seriesPath(reversedSecond, timeZoom, convolutionMaximum, overlapMask)} /><circle className="drag-handle" cx={chartX(Math.floor(sampleCount / 2), sampleCount, timeZoom)} cy={chartY(reversedSecond[Math.floor(sampleCount / 2)]?.y ?? 0, convolutionMaximum)} r="8" /></g><text className="plot-label pink-text" x={PAD.left + 8} y={PAD.top + 38}>粉色：当前重叠　灰色：未重叠</text></svg></div><ZoomControl label="时域缩放" value={timeZoom} onChange={setTimeZoom} /></article>
-        <article className="plot-panel"><div className="plot-heading"><div><p>实时卷积</p><h2>y(τ) = ∫x(t)h(τ − t)dt</h2></div><span className="domain-pill">{domainMode === "continuous" ? "数值积分" : "逐项求和"}</span></div><SignalPlot id="convolution-result" label="实时卷积结果" points={convolutionResult} mode={domainMode} zoom={timeZoom} accent="violet" markerIndex={resultMarker} markerLabel="y" activeUntil={resultMarker} /><div className="result-readout"><span>当前位置 {convolutionShiftLabel}</span><strong>y = {(convolutionResult[resultMarker]?.y ?? 0).toFixed(3)}</strong></div></article>
+        <article className="plot-panel"><div className="plot-heading"><div><p>实时卷积</p><h2>y(τ) = ∫x(t)h(τ − t)dt</h2></div><span className="domain-pill">{domainMode === "continuous" ? "数值积分" : "逐项求和"}</span></div><SignalPlot id="convolution-result" label="实时卷积结果" points={convolutionResult} mode={domainMode} zoom={timeZoom} accent="violet" markerIndex={resultMarker} markerLabel="y" /><div className="result-readout"><span>当前位置 {convolutionShiftLabel}</span><strong>y = {(convolutionResult[resultMarker]?.y ?? 0).toFixed(3)}</strong></div></article>
       </div>
     </section> : <TimeFrequencyCube signal={signal} spectrum={fourier.points} mode={domainMode} />}
   </main>;

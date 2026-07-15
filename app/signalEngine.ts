@@ -53,20 +53,41 @@ const isIdentifierStart = (character: string) => /[a-z_]/i.test(character);
 const isIdentifierPart = (character: string) => /[a-z0-9_]/i.test(character);
 
 function normalizeSource(source: string) {
-  return source
+  const superscripts: Record<string, string> = { "⁰": "^0", "¹": "^1", "²": "^2", "³": "^3", "⁴": "^4", "⁵": "^5", "⁶": "^6", "⁷": "^7", "⁸": "^8", "⁹": "^9" };
+  const normalized = source
     .trim()
-    .replace(/[Ππ]/g, "pi")
-    .replace(/ω/g, "omega")
-    .replace(/δ/g, "delta")
+    .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (character) => superscripts[character])
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/^\s*(?:x|y|f)\s*(?:\(\s*[tn]\s*\)|\[\s*n\s*\])\s*=\s*/i, "")
+    .replace(/\\(sin|cos|tan|exp|sqrt|pi|omega|delta|ln|log)/gi, "$1")
+    .replace(/[Ππ]/g, " pi ")
+    .replace(/[ωΩ]/g, " omega ")
+    .replace(/δ/g, " delta ")
+    .replace(/√/g, "sqrt")
+    .replace(/[（【\[]/g, "(")
+    .replace(/[）】\]]/g, ")")
+    .replace(/[，]/g, ",")
+    .replace(/≤/g, "<=")
+    .replace(/≥/g, ">=")
+    .replace(/≠/g, "!=")
     .replace(/[×·]/g, "*")
     .replace(/÷/g, "/")
     .replace(/[−–—]/g, "-")
     .replace(/\*\*/g, "^")
     .replace(/\bmath\./gi, "")
     .replace(/\bln\b/gi, "log")
+    .replace(/\blg\b/gi, "log10")
+    .replace(/\blog_?10\b/gi, "log10")
+    .replace(/\barcsin\b/gi, "asin")
+    .replace(/\barccos\b/gi, "acos")
+    .replace(/\barctan\b/gi, "atan")
     .replace(/\bsign\b/gi, "sgn")
     .replace(/\bmod\b/gi, "rem")
-    .replace(/\bheaviside\b/gi, "step");
+    .replace(/\b(?:heaviside|unitstep)\b/gi, "step");
+  return normalized
+    .replace(/(^|[+\-*/^(,?:])\s*\|([^|]+)\|/g, "$1abs($2)")
+    .replace(/\b(sin|cos|tan|sinh|cosh|tanh)\s*\^(\d+)\s*(\([^()]*\))/gi, "$1$3^$2");
 }
 
 function tokenize(source: string): Token[] {
@@ -117,9 +138,11 @@ const functionMap: Record<string, (args: number[], context: EvalContext) => numb
   asin: ([value]) => Math.asin(value), acos: ([value]) => Math.acos(value), atan: ([value]) => Math.atan(value),
   sinh: ([value]) => Math.sinh(value), cosh: ([value]) => Math.cosh(value), tanh: ([value]) => Math.tanh(value),
   exp: ([value]) => Math.exp(value), log: ([value]) => value > 0 ? Math.log(value) : Number.NaN,
+  log10: ([value]) => value > 0 ? Math.log10(value) : Number.NaN,
   sqrt: ([value]) => value >= 0 ? Math.sqrt(value) : Number.NaN, abs: ([value]) => Math.abs(value),
   floor: ([value]) => Math.floor(value), ceil: ([value]) => Math.ceil(value), round: ([value]) => Math.round(value),
-  min: (values) => Math.min(...values), max: (values) => Math.max(...values), pow: ([left, right]) => Math.pow(left, right),
+  min: (values) => Math.min(...values), max: (values) => Math.max(...values), pow: ([left, right]) => Math.pow(left, right), atan2: ([left, right]) => Math.atan2(left, right),
+  cot: ([value]) => Math.cos(value) / Math.sin(value), sec: ([value]) => 1 / Math.cos(value), csc: ([value]) => 1 / Math.sin(value),
   rect: ([value]) => Math.abs(value) <= 0.5 ? 1 : 0, tri: ([value]) => Math.max(1 - Math.abs(value), 0),
   step: ([value]) => value >= 0 ? 1 : 0, u: ([value]) => value >= 0 ? 1 : 0,
   sgn: ([value]) => Math.sign(value), rem: ([left, right]) => left % right,
@@ -127,6 +150,19 @@ const functionMap: Record<string, (args: number[], context: EvalContext) => numb
   sinc: ([value]) => Math.abs(value) < 1e-10 ? 1 : Math.sin(Math.PI * value) / (Math.PI * value),
   delta: ([value], context) => Math.abs(value) <= context.dt / 2 ? 1 / Math.max(context.dt, 1e-8) : 0,
   impulse: ([value], context) => Math.abs(value) <= context.dt / 2 ? 1 / Math.max(context.dt, 1e-8) : 0,
+};
+
+const functionArity: Record<string, { min: number; max: number }> = {
+  min: { min: 1, max: Number.POSITIVE_INFINITY }, max: { min: 1, max: Number.POSITIVE_INFINITY },
+  pow: { min: 2, max: 2 }, rem: { min: 2, max: 2 }, atan2: { min: 2, max: 2 },
+  sin: { min: 1, max: 1 }, cos: { min: 1, max: 1 }, tan: { min: 1, max: 1 },
+  asin: { min: 1, max: 1 }, acos: { min: 1, max: 1 }, atan: { min: 1, max: 1 },
+  sinh: { min: 1, max: 1 }, cosh: { min: 1, max: 1 }, tanh: { min: 1, max: 1 },
+  exp: { min: 1, max: 1 }, log: { min: 1, max: 1 }, log10: { min: 1, max: 1 }, sqrt: { min: 1, max: 1 }, abs: { min: 1, max: 1 },
+  floor: { min: 1, max: 1 }, ceil: { min: 1, max: 1 }, round: { min: 1, max: 1 },
+  cot: { min: 1, max: 1 }, sec: { min: 1, max: 1 }, csc: { min: 1, max: 1 },
+  rect: { min: 1, max: 1 }, tri: { min: 1, max: 1 }, step: { min: 1, max: 1 }, u: { min: 1, max: 1 }, sgn: { min: 1, max: 1 },
+  sa: { min: 1, max: 1 }, sinc: { min: 1, max: 1 }, delta: { min: 1, max: 1 }, impulse: { min: 1, max: 1 },
 };
 
 class Parser {
@@ -215,6 +251,8 @@ class Parser {
           while (this.current().kind === "comma") { this.advance(); args.push(this.conditional()); }
         }
         this.expect("right", `函数 ${name} 缺少右括号`);
+        const arity = functionArity[name];
+        if (args.length < arity.min || args.length > arity.max) throw new Error(`函数 ${name} 需要 ${arity.min === arity.max ? arity.min : `${arity.min} 个及以上`} 个参数（第 ${token.at + 1} 位）`);
         return (context) => functionMap[name](args.map((argument) => argument(context)), context);
       }
       if (name === "pi") return () => Math.PI;

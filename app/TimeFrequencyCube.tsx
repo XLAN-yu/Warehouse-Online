@@ -81,6 +81,7 @@ function extractComponents(spectrum: ComplexPoint[], signal: Point[], mode: Doma
   if (!positives.length) return [];
   const binWidth = positives.length > 1 ? Math.abs(positives[1].x - positives[0].x) : 0.01;
   const peak = Math.max(...positives.map((point) => point.magnitude));
+  if (!Number.isFinite(peak) || peak <= 1e-9) return [];
   const localPeaks = positives.filter((point, index) => {
     const before = positives[index - 1]?.magnitude ?? -Infinity;
     const after = positives[index + 1]?.magnitude ?? -Infinity;
@@ -114,6 +115,22 @@ function componentPath(component: FrequencyComponent, mode: DomainMode, amplitud
   }).join(" ");
 }
 
+function compositeSamples(components: FrequencyComponent[], mode: DomainMode): Point[] {
+  const { start, end, count } = timeRange(mode);
+  return Array.from({ length: count }, (_, index) => {
+    const x = start + ((end - start) * index) / Math.max(count - 1, 1);
+    return { x, y: components.reduce((total, component) => total + componentValue(component, x), 0) };
+  });
+}
+
+function compositePath(samples: Point[], amplitudeScale: number) {
+  return samples.map((sample, index) => {
+    const x = 26 + (index / Math.max(samples.length - 1, 1)) * (CUBE_WIDTH - 64);
+    const y = SIGNAL_AXIS_Y - (sample.y / Math.max(amplitudeScale, 1e-8)) * 96;
+    return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+}
+
 function sliceFromTarget(target: EventTarget | null) {
   const element = target instanceof Element ? target.closest("[data-slice-index]") : null;
   const index = Number(element?.getAttribute("data-slice-index"));
@@ -140,7 +157,7 @@ function nextOmega(components: FrequencyComponent[], mode: DomainMode) {
 }
 
 export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[]; spectrum: ComplexPoint[]; mode: DomainMode }) {
-  const [source, setSource] = useState<SliceSource>("demo");
+  const [source, setSource] = useState<SliceSource>("current");
   const [demoDrafts, setDemoDrafts] = useState<Record<DomainMode, FrequencyComponent[]>>(() => ({
     continuous: cloneComponents(DEMO_CONTINUOUS),
     discrete: cloneComponents(DEMO_DISCRETE),
@@ -155,9 +172,11 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
   const previousMode = useRef(mode);
 
   const currentComponents = useMemo(() => extractComponents(spectrum, signal, mode), [mode, signal, spectrum]);
-  const components = source === "demo" ? demoDrafts[mode] : currentDrafts[mode];
+  const components = source === "demo" ? demoDrafts[mode] : currentDrafts[mode].length ? currentDrafts[mode] : currentComponents;
   const activeView = nearestView(orbit);
-  const displayAmplitudeLimit = Math.max(AMPLITUDE_FLOOR, Math.ceil(Math.max(0, ...components.map((component) => component.amplitude)) * 2) / 2);
+  const compositeSignal = useMemo(() => compositeSamples(components, mode), [components, mode]);
+  const displayAmplitudeLimit = Math.max(AMPLITUDE_FLOOR, Math.ceil(Math.max(0, ...components.map((component) => component.amplitude), ...compositeSignal.map((point) => Math.abs(point.y))) * 2) / 2);
+  const frontCompositePath = useMemo(() => compositePath(compositeSignal, displayAmplitudeLimit), [compositeSignal, displayAmplitudeLimit]);
   const selected = components[selectedIndex] ?? null;
   const selectedColor = SLICE_COLORS[selectedIndex % SLICE_COLORS.length];
   const componentCount = components.length;
@@ -170,7 +189,11 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     if (previousMode.current === mode) return;
     previousMode.current = mode;
     setSelectedIndex(0);
-    if (source === "current") setCurrentDrafts((drafts) => ({ ...drafts, [mode]: cloneComponents(currentComponents) }));
+  }, [mode]);
+
+  useEffect(() => {
+    if (source !== "current") return;
+    setCurrentDrafts((drafts) => ({ ...drafts, [mode]: cloneComponents(currentComponents) }));
   }, [currentComponents, mode, source]);
 
   const setOrbitSafely = (next: Orbit) => {
@@ -237,7 +260,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
   const sliceGap = componentCount > 1 ? (CUBE_DEPTH - 56) / (componentCount - 1) : 0;
   const sliceDepth = (index: number) => (index - (componentCount - 1) / 2) * sliceGap;
   const cubeTransform = `scale(${cubeScale}) rotateX(${orbit.pitch}deg) rotateY(${orbit.yaw}deg)`;
-  const sourceLabel = source === "demo" ? "可编辑示范分量" : "当前信号的主分量副本";
+  const sourceLabel = source === "demo" ? "可编辑示范分量" : "当前表达式的主分量（实时采样）";
 
   return <section className="workspace cube-workspace" aria-label="傅里叶分量立方体">
     <div className="cube-intro">
@@ -248,7 +271,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
       </div>
       <div className="cube-source-toggle" role="group" aria-label="立方体数据源">
         <button className={source === "demo" ? "mini-tab active" : "mini-tab"} onClick={() => selectSource("demo")}>示范可编辑分量</button>
-        <button className={source === "current" ? "mini-tab active" : "mini-tab"} onClick={() => selectSource("current")}>导入当前信号</button>
+        <button className={source === "current" ? "mini-tab active" : "mini-tab"} onClick={() => selectSource("current")}>当前表达式主分量</button>
       </div>
     </div>
 
@@ -288,7 +311,16 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
               <div className="cube-face cube-face-left" aria-hidden="true" />
               <div className="cube-face cube-face-top" aria-hidden="true" />
               <div className="cube-face cube-face-bottom" aria-hidden="true" />
-              <div className="cube-face cube-face-front" aria-hidden="true" />
+              <svg className="cube-face cube-face-front cube-composite-face" style={{ transform: `translateZ(${CUBE_DEPTH / 2 + 7}px)` }} viewBox={`0 0 ${CUBE_WIDTH} ${CUBE_HEIGHT}`} role="img" aria-label="最前方透明合成信号；由所有可编辑时域分量实时求和">
+                <rect className="composite-face-fill" x="12" y="18" width={CUBE_WIDTH - 24} height={CUBE_HEIGHT - 36} rx="4" />
+                {Array.from({ length: 4 }, (_, gridIndex) => <line key={`composite-h-${gridIndex}`} className="composite-grid" x1="28" x2={CUBE_WIDTH - 28} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
+                {Array.from({ length: 6 }, (_, gridIndex) => <line key={`composite-v-${gridIndex}`} className="composite-grid" x1={28 + gridIndex * ((CUBE_WIDTH - 56) / 5)} x2={28 + gridIndex * ((CUBE_WIDTH - 56) / 5)} y1="38" y2="262" />)}
+                <line className="composite-axis" x1="28" y1={SIGNAL_AXIS_Y} x2={CUBE_WIDTH - 28} y2={SIGNAL_AXIS_Y} />
+                <path className="composite-wave" d={frontCompositePath} />
+                <text className="composite-title" x="28" y="53">前置合成 xΣ({mode === "continuous" ? "t" : "n"}) = Σₖxₖ</text>
+                <text className="composite-title" x={CUBE_WIDTH - 28} y="53" textAnchor="end">实时数值求和</text>
+                <text className="slice-axis-label" x={CUBE_WIDTH - 28} y="247" textAnchor="end">{mode === "continuous" ? "t" : "n"}</text>
+              </svg>
               {components.map((component, index) => {
                 const selectedSlice = index === selectedIndex;
                 const color = SLICE_COLORS[index % SLICE_COLORS.length];
@@ -363,7 +395,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
           </div>)}
         </div>
         {componentCount > 0 && <label className="slice-picker">当前切片 <output>k{selectedIndex + 1} / {componentCount}</output><input type="range" min="0" max={componentCount - 1} step="1" value={selectedIndex} onChange={(event) => selectSlice(Number(event.target.value))} /></label>}
-        <p className="cube-semantic-note">“导入当前信号”会复制主频率分量供此立方体编辑；滑块与新增分量实时改变相应的时域切片和右侧 Y 面同色频谱峰，不会改写顶部的函数表达式。</p>
+        <p className="cube-semantic-note">“当前表达式主分量”由实时采样后的频谱峰数值重建；滑块与新增分量会同步改变各切片、右侧同色频谱峰和最前方的主分量合成波形，但不会改写顶部函数表达式。</p>
       </aside>
     </div>
   </section>;
