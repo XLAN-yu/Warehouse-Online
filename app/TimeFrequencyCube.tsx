@@ -105,14 +105,24 @@ function extractComponents(spectrum: ComplexPoint[], signal: Point[], mode: Doma
     }));
 }
 
-function componentPath(component: FrequencyComponent, mode: DomainMode, amplitudeScale: number) {
+type PlotPoint = { x: number; y: number };
+
+function componentPlotPoints(component: FrequencyComponent, mode: DomainMode, amplitudeScale: number): PlotPoint[] {
   const { start, end, count } = timeRange(mode);
   return Array.from({ length: count }, (_, index) => {
     const time = start + ((end - start) * index) / Math.max(count - 1, 1);
     const x = 26 + (index / Math.max(count - 1, 1)) * (CUBE_WIDTH - 64);
     const y = SIGNAL_AXIS_Y - (componentValue(component, time) / Math.max(amplitudeScale, 1e-8)) * 96;
-    return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
+    return { x, y };
+  });
+}
+
+function plotPath(points: PlotPoint[]) {
+  return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+}
+
+function componentPath(component: FrequencyComponent, mode: DomainMode, amplitudeScale: number) {
+  return plotPath(componentPlotPoints(component, mode, amplitudeScale));
 }
 
 function compositeSamples(components: FrequencyComponent[], mode: DomainMode): Point[] {
@@ -123,12 +133,16 @@ function compositeSamples(components: FrequencyComponent[], mode: DomainMode): P
   });
 }
 
-function compositePath(samples: Point[], amplitudeScale: number) {
+function compositePlotPoints(samples: Point[], amplitudeScale: number): PlotPoint[] {
   return samples.map((sample, index) => {
     const x = 26 + (index / Math.max(samples.length - 1, 1)) * (CUBE_WIDTH - 64);
     const y = SIGNAL_AXIS_Y - (sample.y / Math.max(amplitudeScale, 1e-8)) * 96;
-    return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
+    return { x, y };
+  });
+}
+
+function compositePath(samples: Point[], amplitudeScale: number) {
+  return plotPath(compositePlotPoints(samples, amplitudeScale));
 }
 
 function sliceFromTarget(target: EventTarget | null) {
@@ -178,6 +192,7 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
   const compositeSignal = useMemo(() => compositeSamples(components, mode), [components, mode]);
   const displayAmplitudeLimit = Math.max(AMPLITUDE_FLOOR, Math.ceil(Math.max(0, ...components.map((component) => component.amplitude), ...compositeSignal.map((point) => Math.abs(point.y))) * 2) / 2);
   const frontCompositePath = useMemo(() => compositePath(compositeSignal, displayAmplitudeLimit), [compositeSignal, displayAmplitudeLimit]);
+  const frontCompositePoints = useMemo(() => compositePlotPoints(compositeSignal, displayAmplitudeLimit), [compositeSignal, displayAmplitudeLimit]);
   const selected = components[selectedIndex] ?? null;
   const selectedColor = SLICE_COLORS[selectedIndex % SLICE_COLORS.length];
   const componentCount = components.length;
@@ -323,7 +338,12 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                 {Array.from({ length: 4 }, (_, gridIndex) => <line key={`composite-h-${gridIndex}`} className="composite-grid" x1="28" x2={CUBE_WIDTH - 28} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
                 {Array.from({ length: 6 }, (_, gridIndex) => <line key={`composite-v-${gridIndex}`} className="composite-grid" x1={28 + gridIndex * ((CUBE_WIDTH - 56) / 5)} x2={28 + gridIndex * ((CUBE_WIDTH - 56) / 5)} y1="38" y2="262" />)}
                 <line className="composite-axis" x1="28" y1={SIGNAL_AXIS_Y} x2={CUBE_WIDTH - 28} y2={SIGNAL_AXIS_Y} />
-                <path className="composite-wave" d={frontCompositePath} />
+                {mode === "continuous" ? <path className="composite-wave" d={frontCompositePath} /> : <g className="composite-discrete-signal" aria-label="离散合成信号采样点">
+                  {frontCompositePoints.map((point, index) => <g key={`composite-sample-${index}`}>
+                    <line className="composite-discrete-stem" x1={point.x} x2={point.x} y1={SIGNAL_AXIS_Y} y2={point.y} />
+                    <circle className="composite-discrete-dot" cx={point.x} cy={point.y} r="2.4" />
+                  </g>)}
+                </g>}
                 <text className="composite-title" x="28" y="53">前置合成 xΣ({mode === "continuous" ? "t" : "n"}) = Σₖxₖ</text>
                 <text className="composite-title" x={CUBE_WIDTH - 28} y="53" textAnchor="end">实时数值求和</text>
                 <text className="slice-axis-label" x={CUBE_WIDTH - 28} y="247" textAnchor="end">{mode === "continuous" ? "t" : "n"}</text>
@@ -332,13 +352,19 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                 const selectedSlice = index === selectedIndex;
                 const color = SLICE_COLORS[index % SLICE_COLORS.length];
                 const timeRight = CUBE_WIDTH;
+                const discretePlotPoints = mode === "discrete" ? componentPlotPoints(component, mode, displayAmplitudeLimit) : [];
                 return <svg key={component.id} data-slice-index={index} className={`cube-slice-plane cube-time-slice ${selectedSlice ? "selected" : ""}`} style={{ transform: `translateZ(${sliceDepth(index)}px)`, color, opacity: selectedSlice ? 1 : 0.3 }} viewBox={`0 0 ${CUBE_WIDTH} ${CUBE_HEIGHT}`} role="img" aria-label={`时域切片 k${index + 1}：${componentFrequency(component, mode, true)}`}>
                   <rect className="slice-plane-fill time-slice-fill" x="12" y="18" width={CUBE_WIDTH - 64} height={CUBE_HEIGHT - 36} rx="4" />
                   {Array.from({ length: 4 }, (_, gridIndex) => <line key={`time-h-${gridIndex}`} className="time-slice-grid" x1="28" x2={timeRight} y1={78 + gridIndex * 54} y2={78 + gridIndex * 54} />)}
                   {Array.from({ length: 6 }, (_, gridIndex) => <line key={`time-v-${gridIndex}`} className="time-slice-grid" x1={28 + gridIndex * ((timeRight - 28) / 5)} x2={28 + gridIndex * ((timeRight - 28) / 5)} y1="38" y2="262" />)}
                   <line className="slice-axis" x1="28" y1={SIGNAL_AXIS_Y} x2={timeRight} y2={SIGNAL_AXIS_Y} />
                   <circle className="slice-axis-joint" cx={timeRight} cy={SIGNAL_AXIS_Y} r={selectedSlice ? 3.8 : 2.4} />
-                  <path className="slice-wave" d={componentPath(component, mode, displayAmplitudeLimit)} />
+                  {mode === "continuous" ? <path className="slice-wave" d={componentPath(component, mode, displayAmplitudeLimit)} /> : <g className="slice-discrete-signal" aria-label="离散时域采样点">
+                    {discretePlotPoints.map((point, sampleIndex) => <g key={`slice-sample-${sampleIndex}`}>
+                      <line className="slice-discrete-stem" x1={point.x} x2={point.x} y1={SIGNAL_AXIS_Y} y2={point.y} />
+                      <circle className="slice-discrete-dot" cx={point.x} cy={point.y} r={selectedSlice ? 2.6 : 2} />
+                    </g>)}
+                  </g>}
                   <line className="slice-depth-hinge" x1={timeRight} x2={timeRight} y1="39" y2="261" />
                   {selectedSlice && <>
                     <text className="time-slice-title" x="28" y="53">时域 xₖ({mode === "continuous" ? "t" : "n"})</text>
@@ -356,11 +382,11 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
                   {Array.from({ length: 5 }, (_, gridIndex) => <line key={`frequency-v-${gridIndex}`} className="frequency-wall-grid" x1={22 + gridIndex * ((CUBE_DEPTH - 44) / 4)} x2={22 + gridIndex * ((CUBE_DEPTH - 44) / 4)} y1="38" y2="262" />)}
                   <line className="frequency-wall-axis" x1="22" x2={CUBE_DEPTH - 22} y1={SIGNAL_AXIS_Y} y2={SIGNAL_AXIS_Y} />
                   <text className="frequency-face-title" x="24" y="53">Y 面 · |Xₖ(ω)|</text>
-                  <text className="frequency-wall-axis-label" x="22" y="267">切片深度 k · 峰频率见标签</text>
+                  <text className="frequency-wall-axis-label" x="22" y="267">切片深度 k（左 → 右递增）· 峰频率见标签</text>
                   {components.map((component, index) => {
                     const selectedSlice = index === selectedIndex;
                     const color = SLICE_COLORS[index % SLICE_COLORS.length];
-                    const frequencyX = CUBE_DEPTH / 2 - sliceDepth(index);
+                    const frequencyX = CUBE_DEPTH / 2 + sliceDepth(index);
                     const peakY = SIGNAL_AXIS_Y - (component.amplitude / displayAmplitudeLimit) * FREQUENCY_PEAK_HEIGHT;
                     return <g key={component.id} data-slice-index={index} className={`frequency-wall-peak ${selectedSlice ? "selected" : ""}`} style={{ color }}>
                       <line className="frequency-depth-guide" x1={frequencyX} x2={frequencyX} y1="42" y2={SIGNAL_AXIS_Y} />

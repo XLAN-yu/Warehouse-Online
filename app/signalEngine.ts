@@ -289,16 +289,23 @@ export function compileExpression(source: string): CompiledExpression {
 }
 
 export function sampleSignal(fn: CompiledExpression["fn"], mode: DomainMode, count: number, shift = 0): Point[] {
-  const step = mode === "continuous" ? 8 / (count - 1) : 1;
-  const start = mode === "continuous" ? -4 : -Math.floor(count / 2);
-  return Array.from({ length: count }, (_, index) => {
+  const safeCount = Math.max(2, Math.round(count));
+  const step = mode === "continuous" ? 8 / (safeCount - 1) : 1;
+  const start = mode === "continuous" ? -4 : -Math.floor(safeCount / 2);
+  return Array.from({ length: safeCount }, (_, index) => {
     const x = start + index * step;
     return { x, y: fn(x - shift, "time", step) };
   });
 }
 
+function isPowerOfTwo(value: number) {
+  return value > 0 && (value & (value - 1)) === 0;
+}
+
 export function fft(real: number[], imaginary: number[], inverse: boolean) {
   const length = real.length;
+  if (imaginary.length !== length) throw new Error("FFT 的实部和虚部长度必须一致");
+  if (!isPowerOfTwo(length)) throw new Error("FFT 仅接收 2 的整数次幂长度；请先用零填充");
   for (let index = 1, reversed = 0; index < length; index += 1) {
     let bit = length >> 1;
     for (; reversed & bit; bit >>= 1) reversed ^= bit;
@@ -328,23 +335,35 @@ function rotate(real: number, imaginary: number, angle: number) {
   return { re: real * Math.cos(angle) - imaginary * Math.sin(angle), im: real * Math.sin(angle) + imaginary * Math.cos(angle) };
 }
 
-export type FourierResult = { points: ComplexPoint[]; rawReal: number[]; rawImaginary: number[]; mode: DomainMode; step: number; start: number };
+export type FourierResult = {
+  points: ComplexPoint[];
+  rawReal: number[];
+  rawImaginary: number[];
+  mode: DomainMode;
+  step: number;
+  start: number;
+  /** Number of real samples before zero padding. */
+  sampleCount: number;
+  /** Power-of-two length used by the numerical FFT. */
+  fftLength: number;
+};
 
 export function forwardFourier(samples: Point[], mode: DomainMode): FourierResult {
-  const count = samples.length;
-  const rawReal = samples.map((point) => Number.isFinite(point.y) ? point.y : 0);
-  const rawImaginary = Array.from({ length: count }, () => 0);
+  const sampleCount = Math.max(1, samples.length);
+  const fftLength = nextPowerOfTwo(sampleCount);
+  const rawReal = Array.from({ length: fftLength }, (_, index) => Number.isFinite(samples[index]?.y) ? samples[index].y : 0);
+  const rawImaginary = Array.from({ length: fftLength }, () => 0);
   fft(rawReal, rawImaginary, false);
-  const step = mode === "continuous" ? 8 / (count - 1) : 1;
+  const step = mode === "continuous" ? 8 / Math.max(sampleCount - 1, 1) : 1;
   const start = samples[0]?.x ?? 0;
-  const points = Array.from({ length: count }, (_, index) => {
-    const signed = index <= count / 2 ? index : index - count;
-    const omega = (2 * Math.PI * signed) / (count * step);
-    const shiftAngle = mode === "continuous" ? -omega * start : omega * (count / 2);
+  const points = Array.from({ length: fftLength }, (_, index) => {
+    const signed = index <= fftLength / 2 ? index : index - fftLength;
+    const omega = (2 * Math.PI * signed) / (fftLength * step);
+    const shiftAngle = -omega * start;
     const scaled = rotate(rawReal[index] * (mode === "continuous" ? step : 1), rawImaginary[index] * (mode === "continuous" ? step : 1), shiftAngle);
     return { x: omega, re: scaled.re, im: scaled.im, y: Math.hypot(scaled.re, scaled.im), magnitude: Math.hypot(scaled.re, scaled.im), phase: Math.atan2(scaled.im, scaled.re) };
   }).sort((left, right) => left.x - right.x);
-  return { points, rawReal, rawImaginary, mode, step, start };
+  return { points, rawReal, rawImaginary, mode, step, start, sampleCount, fftLength };
 }
 
 export function visibleSpectrum(points: ComplexPoint[], mode: DomainMode) {
@@ -355,19 +374,21 @@ export function visibleSpectrum(points: ComplexPoint[], mode: DomainMode) {
 export function inverseFromFourier(result: FourierResult): Point[] {
   const real = [...result.rawReal]; const imaginary = [...result.rawImaginary];
   fft(real, imaginary, true);
-  return real.map((value, index) => ({ x: result.start + index * result.step, y: value }));
+  return real.slice(0, result.sampleCount).map((value, index) => ({ x: result.start + index * result.step, y: value }));
 }
 
 export function inverseFromExpression(fn: CompiledExpression["fn"], mode: DomainMode, count: number) {
-  const step = mode === "continuous" ? 8 / (count - 1) : 1;
-  const start = mode === "continuous" ? -4 : -Math.floor(count / 2);
-  const rawReal = Array.from({ length: count }, () => 0);
-  const rawImaginary = Array.from({ length: count }, () => 0);
+  const sampleCount = Math.max(2, Math.round(count));
+  const fftLength = nextPowerOfTwo(sampleCount);
+  const step = mode === "continuous" ? 8 / (sampleCount - 1) : 1;
+  const start = mode === "continuous" ? -4 : -Math.floor(sampleCount / 2);
+  const rawReal = Array.from({ length: fftLength }, () => 0);
+  const rawImaginary = Array.from({ length: fftLength }, () => 0);
   const physical: ComplexPoint[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const signed = index <= count / 2 ? index : index - count;
-    const omega = (2 * Math.PI * signed) / (count * step);
-    const value = fn(omega, "frequency", (2 * Math.PI) / (count * step));
+  for (let index = 0; index < fftLength; index += 1) {
+    const signed = index <= fftLength / 2 ? index : index - fftLength;
+    const omega = (2 * Math.PI * signed) / (fftLength * step);
+    const value = fn(omega, "frequency", (2 * Math.PI) / (fftLength * step));
     const safeValue = Number.isFinite(value) ? value : 0;
     const raw = mode === "continuous"
       ? rotate(safeValue / step, 0, omega * start)
@@ -376,7 +397,7 @@ export function inverseFromExpression(fn: CompiledExpression["fn"], mode: Domain
     physical.push({ x: omega, re: safeValue, im: 0, y: Math.abs(safeValue), magnitude: Math.abs(safeValue), phase: safeValue >= 0 ? 0 : Math.PI });
   }
   fft(rawReal, rawImaginary, true);
-  return { time: rawReal.map((y, index) => ({ x: start + index * step, y })), spectrum: physical.sort((left, right) => left.x - right.x) };
+  return { time: rawReal.slice(0, sampleCount).map((y, index) => ({ x: start + index * step, y })), spectrum: physical.sort((left, right) => left.x - right.x) };
 }
 
 export function approximateComplexTransform(samples: Point[], mode: DomainMode, kind: "laplace" | "z") {
@@ -394,7 +415,9 @@ export function approximateComplexTransform(samples: Point[], mode: DomainMode, 
 function nextPowerOfTwo(value: number) { let result = 1; while (result < value) result *= 2; return result; }
 
 export function convolve(first: Point[], second: Point[], mode: DomainMode): Point[] {
-  const count = first.length; const length = count * 2 - 1; const fftLength = nextPowerOfTwo(length);
+  const firstCount = first.length; const secondCount = second.length;
+  if (!firstCount || !secondCount) return [];
+  const length = firstCount + secondCount - 1; const fftLength = nextPowerOfTwo(length);
   const firstReal = Array.from({ length: fftLength }, (_, index) => Number.isFinite(first[index]?.y) ? first[index].y : 0);
   const secondReal = Array.from({ length: fftLength }, (_, index) => Number.isFinite(second[index]?.y) ? second[index].y : 0);
   const firstImaginary = Array.from({ length: fftLength }, () => 0); const secondImaginary = Array.from({ length: fftLength }, () => 0);
@@ -404,6 +427,301 @@ export function convolve(first: Point[], second: Point[], mode: DomainMode): Poi
     firstImaginary[index] = firstReal[index] * secondImaginary[index] + firstImaginary[index] * secondReal[index]; firstReal[index] = real;
   }
   fft(firstReal, firstImaginary, true);
-  const step = mode === "continuous" ? 8 / (count - 1) : 1; const start = mode === "continuous" ? -8 : -count;
+  const step = mode === "continuous" ? sampleSpacing(first, 8 / Math.max(firstCount - 1, 1)) : 1;
+  const start = (first[0]?.x ?? 0) + (second[0]?.x ?? 0);
   return firstReal.slice(0, length).map((y, index) => ({ x: start + index * step, y: y * step }));
+}
+
+/** A weighted real-valued signal used by the linearity visualisation. */
+export type SignalTerm = { samples: readonly Point[]; coefficient: number };
+
+export type ConvolutionFrame = {
+  /** h(τ − t), sampled at the same time locations as the first signal. */
+  kernel: Point[];
+  /** x(t)h(τ − t), the values being integrated or summed. */
+  integrand: Point[];
+  /** True only where h(τ − t) is inside the sampled support of h. */
+  overlap: boolean[];
+  /** The numerical value of the convolution at τ. */
+  value: number;
+};
+
+export type ParsevalEnergy = { time: number; frequency: number; relativeError: number };
+
+export type ConjugateSymmetry = { mirrored: ComplexPoint[]; maximumError: number; rmsError: number };
+
+function finiteValue(point: Point | undefined) {
+  return point && Number.isFinite(point.y) ? point.y : 0;
+}
+
+function finiteCoordinate(point: { x: number } | undefined) {
+  return point && Number.isFinite(point.x) ? point.x : 0;
+}
+
+/**
+ * Determines the native sample spacing.  The median gap tolerates a missing
+ * point better than using only the first interval, while retaining O(n) cost.
+ */
+export function sampleSpacing(points: readonly { x: number }[], fallback = 1) {
+  const gaps: number[] = [];
+  for (let index = 1; index < points.length; index += 1) {
+    const gap = Math.abs(finiteCoordinate(points[index]) - finiteCoordinate(points[index - 1]));
+    if (Number.isFinite(gap) && gap > 1e-12) gaps.push(gap);
+  }
+  if (!gaps.length) return fallback;
+  gaps.sort((left, right) => left - right);
+  return gaps[Math.floor(gaps.length / 2)] ?? fallback;
+}
+
+/**
+ * Samples an existing finite signal at a coordinate.  Continuous signals use
+ * linear interpolation; discrete signals use the nearest integer sample.
+ * Values outside the captured window are explicitly zero padded.
+ */
+export function sampleSignalAt(samples: readonly Point[], coordinate: number, mode: DomainMode) {
+  if (!samples.length || !Number.isFinite(coordinate)) return 0;
+  const first = samples[0]; const last = samples[samples.length - 1];
+  if (!first || !last || coordinate < first.x - 1e-9 || coordinate > last.x + 1e-9) return 0;
+  if (mode === "discrete") {
+    const index = Math.round(coordinate - first.x);
+    const candidate = samples[index];
+    return candidate && Math.abs(candidate.x - coordinate) <= 0.500001 ? finiteValue(candidate) : 0;
+  }
+  if (coordinate <= first.x) return finiteValue(first);
+  if (coordinate >= last.x) return finiteValue(last);
+  let left = 0; let right = samples.length - 1;
+  while (right - left > 1) {
+    const middle = Math.floor((left + right) / 2);
+    if ((samples[middle]?.x ?? 0) <= coordinate) left = middle;
+    else right = middle;
+  }
+  const lower = samples[left]; const upper = samples[right];
+  if (!lower || !upper) return 0;
+  const denominator = upper.x - lower.x;
+  if (!Number.isFinite(denominator) || Math.abs(denominator) < 1e-12) return finiteValue(lower);
+  const fraction = clamp((coordinate - lower.x) / denominator, 0, 1);
+  return finiteValue(lower) + (finiteValue(upper) - finiteValue(lower)) * fraction;
+}
+
+/** Resamples a signal on explicit display coordinates without changing its support. */
+export function resampleSignal(samples: readonly Point[], coordinates: readonly number[], mode: DomainMode): Point[] {
+  return coordinates.map((x) => ({ x, y: sampleSignalAt(samples, x, mode) }));
+}
+
+/** x(t − t₀) or x[n − n₀]; non-integer discrete shifts use nearest-neighbour resampling. */
+export function timeShiftSignal(samples: readonly Point[], shift: number, mode: DomainMode): Point[] {
+  return samples.map((point) => ({ x: point.x, y: sampleSignalAt(samples, point.x - shift, mode) }));
+}
+
+/** x(at) or x[an].  A zero scale produces the zero signal instead of NaN. */
+export function timeScaleSignal(samples: readonly Point[], scale: number, mode: DomainMode): Point[] {
+  if (!Number.isFinite(scale) || Math.abs(scale) < 1e-12) return samples.map((point) => ({ x: point.x, y: 0 }));
+  return samples.map((point) => ({ x: point.x, y: sampleSignalAt(samples, scale * point.x, mode) }));
+}
+
+/** x(−t) or x[−n], useful for convolution and duality demonstrations. */
+export function timeReverseSignal(samples: readonly Point[], mode: DomainMode): Point[] {
+  return samples.map((point) => ({ x: point.x, y: sampleSignalAt(samples, -point.x, mode) }));
+}
+
+/**
+ * Real-valued modulation x(t)cos(ω₀t + φ).  It creates the expected pair of
+ * shifted sidebands for real input; use frequencyShiftSpectrum for the single
+ * complex-spectrum shift X(ω − ω₀).
+ */
+export function modulateSignal(samples: readonly Point[], omega: number, phase = 0): Point[] {
+  const safeOmega = Number.isFinite(omega) ? omega : 0;
+  const safePhase = Number.isFinite(phase) ? phase : 0;
+  return samples.map((point) => ({ x: point.x, y: finiteValue(point) * Math.cos(safeOmega * point.x + safePhase) }));
+}
+
+/** Computes Σᵢ aᵢxᵢ(t) on a shared coordinate grid. */
+export function linearCombineSignals(terms: readonly SignalTerm[], mode: DomainMode, coordinates = terms[0]?.samples.map((point) => point.x) ?? []): Point[] {
+  return coordinates.map((x) => ({
+    x,
+    y: terms.reduce((total, term) => total + (Number.isFinite(term.coefficient) ? term.coefficient : 0) * sampleSignalAt(term.samples, x, mode), 0),
+  }));
+}
+
+/** x(t)h(t) or x[n]h[n] on the first signal's grid. */
+export function multiplySignals(first: readonly Point[], second: readonly Point[], mode: DomainMode): Point[] {
+  return first.map((point) => ({ x: point.x, y: finiteValue(point) * sampleSignalAt(second, point.x, mode) }));
+}
+
+/** Numerical first derivative (continuous) or first backward difference (discrete). */
+export function differentiateSignal(samples: readonly Point[], mode: DomainMode): Point[] {
+  if (samples.length < 2) return samples.map((point) => ({ x: point.x, y: 0 }));
+  return samples.map((point, index) => {
+    if (mode === "discrete") return { x: point.x, y: finiteValue(point) - finiteValue(samples[index - 1]) };
+    const before = samples[Math.max(0, index - 1)]; const after = samples[Math.min(samples.length - 1, index + 1)];
+    const delta = (after?.x ?? 0) - (before?.x ?? 0);
+    return { x: point.x, y: Math.abs(delta) > 1e-12 ? (finiteValue(after) - finiteValue(before)) / delta : 0 };
+  });
+}
+
+/** Cumulative trapezoidal integral (continuous) or cumulative sum (discrete). */
+export function integrateSignal(samples: readonly Point[], mode: DomainMode, initial = 0): Point[] {
+  let accumulated = Number.isFinite(initial) ? initial : 0;
+  return samples.map((point, index) => {
+    if (mode === "discrete") accumulated += finiteValue(point);
+    else if (index > 0) {
+      const previous = samples[index - 1];
+      const delta = point.x - (previous?.x ?? point.x);
+      accumulated += (finiteValue(previous) + finiteValue(point)) * delta / 2;
+    }
+    return { x: point.x, y: accumulated };
+  });
+}
+
+/**
+ * Exposes the exact integrand used by the definition y(τ)=∫x(t)h(τ−t)dt.
+ * It lets the UI colour only the actual overlap rather than faking a mask.
+ */
+export function convolutionFrame(first: readonly Point[], second: readonly Point[], tau: number, mode: DomainMode): ConvolutionFrame {
+  const secondStart = second[0]?.x ?? 0; const secondEnd = second[second.length - 1]?.x ?? 0;
+  const kernel = first.map((point) => ({ x: point.x, y: sampleSignalAt(second, tau - point.x, mode) }));
+  const overlap = first.map((point) => {
+    const source = tau - point.x;
+    return source >= secondStart - 1e-9 && source <= secondEnd + 1e-9;
+  });
+  const integrand = first.map((point, index) => ({ x: point.x, y: finiteValue(point) * finiteValue(kernel[index]) }));
+  const value = mode === "continuous"
+    ? integrand.reduce((total, point, index) => {
+      if (index === 0) return total;
+      const previous = integrand[index - 1];
+      return total + (finiteValue(previous) + finiteValue(point)) * (point.x - (previous?.x ?? point.x)) / 2;
+    }, 0)
+    : integrand.reduce((total, point) => total + finiteValue(point), 0);
+  return { kernel, integrand, overlap, value };
+}
+
+export function complexPoint(x: number, re: number, im: number): ComplexPoint {
+  const safeRe = Number.isFinite(re) ? re : 0; const safeIm = Number.isFinite(im) ? im : 0;
+  const magnitude = Math.hypot(safeRe, safeIm);
+  return { x, y: magnitude, re: safeRe, im: safeIm, magnitude, phase: Math.atan2(safeIm, safeRe) };
+}
+
+function wrapAngularFrequency(omega: number) {
+  const period = 2 * Math.PI;
+  const wrapped = ((omega + Math.PI) % period + period) % period - Math.PI;
+  return Math.abs(wrapped + Math.PI) < 1e-10 && omega > 0 ? Math.PI : wrapped;
+}
+
+/** Linear complex interpolation on a spectrum; discrete spectra are periodic on [−π, π]. */
+export function sampleSpectrumAt(points: readonly ComplexPoint[], omega: number, mode: DomainMode): ComplexPoint {
+  if (!points.length || !Number.isFinite(omega)) return complexPoint(omega, 0, 0);
+  const coordinate = mode === "discrete" ? wrapAngularFrequency(omega) : omega;
+  const first = points[0]; const last = points[points.length - 1];
+  if (!first || !last) return complexPoint(coordinate, 0, 0);
+  if (mode === "discrete" && coordinate < first.x) {
+    const lowerX = last.x - 2 * Math.PI;
+    const denominator = first.x - lowerX;
+    const fraction = Math.abs(denominator) < 1e-12 ? 0 : clamp((coordinate - lowerX) / denominator, 0, 1);
+    return complexPoint(coordinate, last.re + (first.re - last.re) * fraction, last.im + (first.im - last.im) * fraction);
+  }
+  if (mode === "discrete" && coordinate > last.x) {
+    const upperX = first.x + 2 * Math.PI;
+    const denominator = upperX - last.x;
+    const fraction = Math.abs(denominator) < 1e-12 ? 0 : clamp((coordinate - last.x) / denominator, 0, 1);
+    return complexPoint(coordinate, last.re + (first.re - last.re) * fraction, last.im + (first.im - last.im) * fraction);
+  }
+  if (coordinate < first.x - 1e-9 || coordinate > last.x + 1e-9) return complexPoint(coordinate, 0, 0);
+  if (coordinate <= first.x) return complexPoint(coordinate, first.re, first.im);
+  if (coordinate >= last.x) return complexPoint(coordinate, last.re, last.im);
+  let left = 0; let right = points.length - 1;
+  while (right - left > 1) {
+    const middle = Math.floor((left + right) / 2);
+    if ((points[middle]?.x ?? 0) <= coordinate) left = middle;
+    else right = middle;
+  }
+  const lower = points[left]; const upper = points[right];
+  if (!lower || !upper) return complexPoint(coordinate, 0, 0);
+  const denominator = upper.x - lower.x;
+  const fraction = Math.abs(denominator) < 1e-12 ? 0 : clamp((coordinate - lower.x) / denominator, 0, 1);
+  return complexPoint(coordinate, lower.re + (upper.re - lower.re) * fraction, lower.im + (upper.im - lower.im) * fraction);
+}
+
+/** X(ω − ω₀), the frequency-domain form of complex exponential modulation. */
+export function frequencyShiftSpectrum(points: readonly ComplexPoint[], omegaShift: number, mode: DomainMode): ComplexPoint[] {
+  const safeShift = Number.isFinite(omegaShift) ? omegaShift : 0;
+  return points.map((point) => {
+    const source = sampleSpectrumAt(points, point.x - safeShift, mode);
+    return complexPoint(point.x, source.re, source.im);
+  });
+}
+
+/** (1/|a|)X(ω/a), paired with timeScaleSignal. */
+export function frequencyScaleSpectrum(points: readonly ComplexPoint[], scale: number, mode: DomainMode): ComplexPoint[] {
+  if (!Number.isFinite(scale) || Math.abs(scale) < 1e-12) return points.map((point) => complexPoint(point.x, 0, 0));
+  const gain = 1 / Math.abs(scale);
+  return points.map((point) => {
+    const source = sampleSpectrumAt(points, point.x / scale, mode);
+    return complexPoint(point.x, source.re * gain, source.im * gain);
+  });
+}
+
+/** Pointwise X(ω)H(ω), used by the convolution theorem. */
+export function multiplySpectra(first: readonly ComplexPoint[], second: readonly ComplexPoint[], mode: DomainMode): ComplexPoint[] {
+  return first.map((point) => {
+    const other = sampleSpectrumAt(second, point.x, mode);
+    return complexPoint(point.x, point.re * other.re - point.im * other.im, point.re * other.im + point.im * other.re);
+  });
+}
+
+/** (jω)ⁿX(ω), the spectrum of the n-th time derivative. */
+export function differentiateSpectrum(points: readonly ComplexPoint[], order = 1): ComplexPoint[] {
+  const safeOrder = Math.max(0, Math.round(order));
+  return points.map((point) => {
+    let re = point.re; let im = point.im;
+    for (let index = 0; index < safeOrder; index += 1) { const nextRe = -point.x * im; im = point.x * re; re = nextRe; }
+    return complexPoint(point.x, re, im);
+  });
+}
+
+/** X(ω)/(jω)ⁿ away from DC.  The required DC impulse term is omitted deliberately. */
+export function integrateSpectrum(points: readonly ComplexPoint[], order = 1, dcEpsilon = 1e-8): ComplexPoint[] {
+  const safeOrder = Math.max(0, Math.round(order));
+  return points.map((point) => {
+    if (safeOrder > 0 && Math.abs(point.x) <= dcEpsilon) return complexPoint(point.x, 0, 0);
+    let re = point.re; let im = point.im;
+    for (let index = 0; index < safeOrder; index += 1) {
+      const denominator = point.x * point.x;
+      const nextRe = im / point.x; const nextIm = -re / point.x;
+      if (!Number.isFinite(denominator) || denominator <= 0) return complexPoint(point.x, 0, 0);
+      re = nextRe; im = nextIm;
+    }
+    return complexPoint(point.x, re, im);
+  });
+}
+
+/** X*(−ω), the expected spectrum of a conjugated time-domain signal. */
+export function conjugateMirrorSpectrum(points: readonly ComplexPoint[], mode: DomainMode): ComplexPoint[] {
+  return points.map((point) => {
+    const mirrored = sampleSpectrumAt(points, -point.x, mode);
+    return complexPoint(point.x, mirrored.re, -mirrored.im);
+  });
+}
+
+/** Quantifies X(−ω)=X*(ω), allowing the UI to show a numerical symmetry residual. */
+export function conjugateSymmetry(points: readonly ComplexPoint[], mode: DomainMode): ConjugateSymmetry {
+  const mirrored = conjugateMirrorSpectrum(points, mode);
+  if (!points.length) return { mirrored, maximumError: 0, rmsError: 0 };
+  let maximumError = 0; let squaredError = 0;
+  points.forEach((point, index) => {
+    const expected = mirrored[index];
+    const error = Math.hypot(point.re - (expected?.re ?? 0), point.im - (expected?.im ?? 0));
+    maximumError = Math.max(maximumError, error); squaredError += error * error;
+  });
+  return { mirrored, maximumError, rmsError: Math.sqrt(squaredError / points.length) };
+}
+
+/** Numerically compares time and frequency energies under the app's Fourier normalisation. */
+export function parsevalEnergy(samples: readonly Point[], spectrum: readonly ComplexPoint[], mode: DomainMode): ParsevalEnergy {
+  const timeStep = mode === "continuous" ? sampleSpacing(samples, 1) : 1;
+  const time = samples.reduce((total, point) => total + finiteValue(point) ** 2, 0) * timeStep;
+  const frequency = mode === "continuous"
+    ? spectrum.reduce((total, point) => total + point.magnitude ** 2, 0) * sampleSpacing(spectrum, 1) / (2 * Math.PI)
+    : spectrum.reduce((total, point) => total + point.magnitude ** 2, 0) / Math.max(spectrum.length, 1);
+  const relativeError = Math.abs(time - frequency) / Math.max(Math.abs(time), Math.abs(frequency), 1e-12);
+  return { time, frequency, relativeError };
 }

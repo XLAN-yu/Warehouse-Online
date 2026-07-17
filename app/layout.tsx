@@ -13,8 +13,27 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "信号分析工具",
-  description: "用于时频变换和卷积可视化的交互式工具。",
+  metadataBase: new URL("https://signal-analysis-workbench.xlan04910.chatgpt.site"),
+  title: "Signal Lab · 信号分析工具",
+  description: "用于时频变换、卷积和时频立方体可视化的交互式工具。",
+  openGraph: {
+    title: "Signal Lab · 信号分析工具",
+    description: "时频变换 · 卷积 · 时频立方体",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "Signal Lab 时频变换、卷积与时频立方体工作台",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Signal Lab · 信号分析工具",
+    description: "时频变换 · 卷积 · 时频立方体",
+    images: ["/og.png"],
+  },
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
