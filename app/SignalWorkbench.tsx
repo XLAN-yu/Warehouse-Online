@@ -50,6 +50,9 @@ type DomainSnapshot = {
 const WIDTH = 620;
 const HEIGHT = 300;
 const PAD = { left: 48, right: 20, top: 24, bottom: 38 };
+const DEFAULT_ZOOM = 1;
+const MAX_ZOOM = 16;
+const DEFAULT_DISCRETE_SAMPLE_COUNT = 128;
 
 const FOURIER_PROPERTIES: { id: PropertyId; label: string; time: string; frequency: string; note: string }[] = [
   { id: "free", label: "自由分析", time: "x(t)", frequency: "X(jω)", note: "直接编辑输入信号并观察数值变换。" },
@@ -86,7 +89,7 @@ function createDomainSnapshot(mode: DomainMode): DomainSnapshot {
     linearA: 1, linearB: 0.65,
     linearFirstPreset: primary, linearSecondPreset: secondary,
     linearFirstExpression: expressionForPreset(primary, mode), linearSecondExpression: expressionForPreset(secondary, mode),
-    timeZoom: 1, frequencyZoom: 1, discreteSampleCount: 128,
+    timeZoom: DEFAULT_ZOOM, frequencyZoom: DEFAULT_ZOOM, discreteSampleCount: DEFAULT_DISCRETE_SAMPLE_COUNT,
     firstPreset: primary, secondPreset: secondary,
     firstExpression: expressionForPreset(primary, mode), secondExpression: expressionForPreset(secondary, mode), shift: 0,
   };
@@ -189,18 +192,40 @@ function frequencyPath(points: ComplexPoint[], zoom: number, value: (point: Comp
   }).join(" ");
 }
 
-function FrequencyPlot({ points, zoom, label }: { points: ComplexPoint[]; zoom: number; label: string }) {
+function frequencyY(value: number, maximum: number, top: number, bottom: number) {
+  return bottom - (value / Math.max(maximum, 1e-8)) * (bottom - top);
+}
+
+function FrequencyPlot({ points, zoom, label, discreteBins }: { points: ComplexPoint[]; zoom: number; label: string; discreteBins: boolean }) {
+  const isDiscrete = discreteBins;
   const maximum = Math.max(1e-8, ...points.map((point) => point.magnitude));
   const magnitude = frequencyPath(points, zoom, (point) => point.magnitude, 36, 172, maximum);
   const phase = frequencyPath(points, zoom, (point) => (point.phase + Math.PI) / (2 * Math.PI), 208, 264, 1);
   const x0 = chartX(0, points.length, zoom); const x1 = chartX(points.length - 1, points.length, zoom);
+  const magnitudeDotRadius = points.length > 512 ? 1.25 : points.length > 256 ? 1.75 : 2.6;
+  const phaseDotRadius = Math.min(magnitudeDotRadius, 2.2);
   return <svg className="signal-plot" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={label}>
-    <AxisGrid label="ω" />
+    <AxisGrid label={isDiscrete ? "k" : "ω"} />
     <line className="spectrum-divider" x1={PAD.left} x2={WIDTH - PAD.right} y1="195" y2="195" />
-    <path className="spectrum-area" d={`${magnitude} L${x1},172 L${x0},172 Z`} />
-    <path className="signal-line plot-pink" d={magnitude} />
-    <path className="phase-line" d={phase} />
-    <text className="plot-label pink-text" x={PAD.left + 8} y="32">幅度 |X|</text><text className="plot-label violet-text" x={PAD.left + 8} y="207">相位 ∠X（时移时实时变化）</text>
+    {isDiscrete ? <>
+      <g className="spectrum-bins" aria-label="离散幅度频率格点">
+        {points.map((point, index) => {
+          const x = chartX(index, points.length, zoom); const y = frequencyY(point.magnitude, maximum, 36, 172);
+          return <g key={`magnitude-${index}`} className="plot-pink"><line className="spectrum-bin-stem" x1={x} x2={x} y1="172" y2={y} /><circle className="spectrum-bin-dot" cx={x} cy={y} r={magnitudeDotRadius} /></g>;
+        })}
+      </g>
+      <g className="spectrum-bins spectrum-phase-bins" aria-label="离散相位频率格点">
+        {points.map((point, index) => {
+          const x = chartX(index, points.length, zoom); const y = frequencyY((point.phase + Math.PI) / (2 * Math.PI), 1, 208, 264);
+          return <g key={`phase-${index}`} className="plot-violet"><line className="spectrum-bin-stem" x1={x} x2={x} y1="236" y2={y} /><circle className="spectrum-bin-dot" cx={x} cy={y} r={phaseDotRadius} /></g>;
+        })}
+      </g>
+    </> : <>
+      <path className="spectrum-area" d={`${magnitude} L${x1},172 L${x0},172 Z`} />
+      <path className="signal-line plot-pink" d={magnitude} />
+      <path className="phase-line" d={phase} />
+    </>}
+    <text className="plot-label pink-text" x={PAD.left + 8} y="32">{isDiscrete ? "离散幅度 |X[k]|" : "幅度 |X|"}</text><text className="plot-label violet-text" x={PAD.left + 8} y="207">{isDiscrete ? "离散相位 ∠X[k]" : "相位 ∠X（时移时实时变化）"}</text>{isDiscrete && <text className="plot-label" x={WIDTH - PAD.right} y="32" textAnchor="end">N = {points.length} 个 DFT 频率格点</text>}
   </svg>;
 }
 
@@ -219,13 +244,18 @@ function MultiSignalPlot({ id, label, series, mode, zoom, visible }: { id: strin
   </svg>;
 }
 
-function MultiSpectrumPlot({ id, label, series, zoom, visible }: { id: string; label: string; series: SpectrumSeries[]; zoom: number; visible: Record<string, boolean> }) {
+function MultiSpectrumPlot({ id, label, series, mode, zoom, visible }: { id: string; label: string; series: SpectrumSeries[]; mode: DomainMode; zoom: number; visible: Record<string, boolean> }) {
   const active = series.filter((item) => visible[item.id] !== false);
   const maximum = Math.max(1e-8, ...active.flatMap((item) => item.points.map((point) => point.magnitude).filter(Number.isFinite)));
   return <svg className="signal-plot property-plot" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={label}>
-    <AxisGrid label="ω" />
-    {active.map((item) => <path key={item.id} className={`signal-line plot-${item.accent}`} d={frequencyPath(item.points, zoom, (point) => point.magnitude, PAD.top, HEIGHT - PAD.bottom, maximum)} />)}
-    <text className="plot-label" x={PAD.left + 8} y={PAD.top + 18}>幅度谱 |X(ω)|</text>
+    <AxisGrid label={mode === "continuous" ? "ω" : "k"} />
+    {active.map((item) => mode === "continuous"
+      ? <path key={item.id} className={`signal-line plot-${item.accent}`} d={frequencyPath(item.points, zoom, (point) => point.magnitude, PAD.top, HEIGHT - PAD.bottom, maximum)} />
+      : <g key={item.id} className={`spectrum-bins property-spectrum-bins plot-${item.accent}`}>{item.points.map((point, index) => {
+        const x = chartX(index, item.points.length, zoom); const y = frequencyY(point.magnitude, maximum, PAD.top, HEIGHT - PAD.bottom);
+        return <g key={`${item.id}-${index}`}><line className="spectrum-bin-stem" x1={x} x2={x} y1={HEIGHT - PAD.bottom} y2={y} /><circle className="spectrum-bin-dot" cx={x} cy={y} r="2.1" /></g>;
+      })}</g>)}
+    <text className="plot-label" x={PAD.left + 8} y={PAD.top + 18}>{mode === "continuous" ? "幅度谱 |X(ω)|" : "离散幅度谱 |X[k]|"}</text>
   </svg>;
 }
 
@@ -234,7 +264,12 @@ function SeriesVisibility({ series, visible, onChange }: { series: { id: string;
 }
 
 function ZoomControl({ value, onChange, label }: { value: number; onChange: (value: number) => void; label: string }) {
-  return <label className="zoom-control"><span>{label}</span><output>{value.toFixed(1)}×</output><input type="range" min="0.5" max="2.4" step="0.1" value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+  return <div className="zoom-control"><label><span>{label}</span><output>{value.toFixed(1)}×</output><input type="range" min="0.5" max={MAX_ZOOM} step="0.1" value={value} onChange={(event) => onChange(Number(event.target.value))} /></label><button type="button" className="slider-reset" aria-label={`恢复${label}为 1 倍`} onClick={() => onChange(DEFAULT_ZOOM)}>恢复默认</button></div>;
+}
+
+function SampleCountControl({ id, value, onChange }: { id: string; value: number; onChange: (value: number) => void }) {
+  const labelId = `${id}-label`;
+  return <div className="sample-count-control" role="group" aria-labelledby={labelId}><span id={labelId}>离散点数 N</span><input aria-labelledby={labelId} type="number" min="16" max="1024" step="1" value={value} onChange={(event) => onChange(clamp(Number(event.target.value) || 16, 16, 1024))} /><input aria-labelledby={labelId} type="range" min="16" max="1024" step="1" value={value} onChange={(event) => onChange(Number(event.target.value))} /><button type="button" className="slider-reset" aria-label="恢复离散采样点数为 128" onClick={() => onChange(DEFAULT_DISCRETE_SAMPLE_COUNT)}>恢复默认</button></div>;
 }
 
 function displayPresetOptions(mode: DomainMode) {
@@ -476,7 +511,7 @@ export function SignalWorkbench() {
         <label className="expression-input">函数表达式 x({domainMode === "continuous" ? "t" : "n"})<input ref={expressionTarget === "time" ? timeInputRef : undefined} value={expression} onFocus={() => setExpressionTarget("time")} onChange={(event) => setExpression(event.target.value)} spellCheck="false" /></label>
         <label>变换<select value={transformKind} onChange={(event) => selectTransform(event.target.value as TransformKind)}><option value="fourier">傅里叶变换</option><option value="laplace">拉普拉斯变换</option><option value="z">Z 变换</option></select></label>
         <div className="direction-toggle" role="group" aria-label="变换方向"><button className={direction === "forward" ? "mini-tab active" : "mini-tab"} onClick={() => setDirection("forward")}>正变换</button><button disabled={transformKind !== "fourier"} className={direction === "inverse" ? "mini-tab active" : "mini-tab"} onClick={() => setDirection("inverse")}>逆变换</button></div>
-        {domainMode === "discrete" && <label className="sample-count-control">离散点数 N<input type="number" min="16" max="1024" step="1" value={discreteSampleCount} onChange={(event) => setDiscreteSampleCount(clamp(Number(event.target.value) || 16, 16, 1024))} /><input aria-label="离散采样点滑动调节" type="range" min="16" max="1024" step="1" value={discreteSampleCount} onChange={(event) => setDiscreteSampleCount(Number(event.target.value))} /></label>}
+        {domainMode === "discrete" && <SampleCountControl id="transform-sample-count" value={discreteSampleCount} onChange={setDiscreteSampleCount} />}
         <span className={sourceExpressionError ? "status-dot error" : "status-dot"}>{sourceExpressionError ? `采样暂停：${sourceExpressionError}` : `${sampleCount} 点实时数值采样`}</span>
       </div>
       {direction === "inverse" && transformKind === "fourier" && <div className="inverse-row"><div className="direction-toggle" role="group" aria-label="逆变换频谱来源"><button className={inverseSource === "current" ? "mini-tab active" : "mini-tab"} onClick={() => setInverseSource("current")}>使用当前频谱</button><button className={inverseSource === "formula" ? "mini-tab active" : "mini-tab"} onClick={() => setInverseSource("formula")}>输入频域函数</button></div>{inverseSource === "formula" && <label className="expression-input inverse-expression">X({domainMode === "continuous" ? "ω" : "k"})<input ref={expressionTarget === "frequency" ? frequencyInputRef : undefined} value={inverseExpression} onFocus={() => setExpressionTarget("frequency")} onChange={(event) => setInverseExpression(event.target.value)} spellCheck="false" /></label>}</div>}
@@ -491,26 +526,26 @@ export function SignalWorkbench() {
           <label>x₂ 标准信号<select value={linearSecondPreset} onChange={(event) => { setLinearSecondPreset(event.target.value); setLinearSecondExpression(expressionForPreset(event.target.value, domainMode)); }}>{displayPresetOptions(domainMode)}</select></label>
           <label className="expression-input">x₂({domainMode === "continuous" ? "t" : "n"})<input value={linearSecondExpression} onChange={(event) => setLinearSecondExpression(event.target.value)} spellCheck="false" /></label>
         </div>}
-        {direction === "forward" && propertyId === "timeShift" && <div className="property-controls property-slider"><label>时移 {domainMode === "continuous" ? "t₀" : "n₀"}<output>{shiftLabel}</output><input type="range" min={domainMode === "continuous" ? -4 : -Math.floor(sampleCount / 2)} max={domainMode === "continuous" ? 4 : Math.floor(sampleCount / 2)} step={domainMode === "continuous" ? .05 : 1} value={propertyShift} onChange={(event) => setPropertyShift(Number(event.target.value))} /></label></div>}
-        {direction === "forward" && propertyId === "frequencyShift" && <div className="property-controls property-slider"><label>频移 {domainMode === "continuous" ? "ω₀ (rad/s)" : "Ω₀ (rad/sample)"}<output>{frequencyShift.toFixed(2)}</output><input type="range" min={domainMode === "continuous" ? -16 : -Math.PI} max={domainMode === "continuous" ? 16 : Math.PI} step="0.05" value={frequencyShift} onChange={(event) => setFrequencyShift(Number(event.target.value))} /></label></div>}
-        {direction === "forward" && propertyId === "scale" && <div className="property-controls property-slider"><label>尺度 a：x(at)<output>{scaleFactor.toFixed(2)}</output><input type="range" min="0.25" max="3" step="0.05" value={scaleFactor} onChange={(event) => setScaleFactor(Number(event.target.value))} /></label></div>}
+        {direction === "forward" && propertyId === "timeShift" && <div className="property-controls property-slider"><label>时移 {domainMode === "continuous" ? "t₀" : "n₀"}<output>{shiftLabel}</output><input type="range" min={domainMode === "continuous" ? -4 : -Math.floor(sampleCount / 2)} max={domainMode === "continuous" ? 4 : Math.floor(sampleCount / 2)} step={domainMode === "continuous" ? .05 : 1} value={propertyShift} onChange={(event) => setPropertyShift(Number(event.target.value))} /></label><button type="button" className="slider-reset" aria-label="恢复时移为零" onClick={() => setPropertyShift(0)}>恢复默认</button></div>}
+        {direction === "forward" && propertyId === "frequencyShift" && <div className="property-controls property-slider"><label>频移 {domainMode === "continuous" ? "ω₀ (rad/s)" : "Ω₀ (rad/sample)"}<output>{frequencyShift.toFixed(2)}</output><input type="range" min={domainMode === "continuous" ? -16 : -Math.PI} max={domainMode === "continuous" ? 16 : Math.PI} step="0.05" value={frequencyShift} onChange={(event) => setFrequencyShift(Number(event.target.value))} /></label><button type="button" className="slider-reset" aria-label="恢复频移为零" onClick={() => setFrequencyShift(0)}>恢复默认</button></div>}
+        {direction === "forward" && propertyId === "scale" && <div className="property-controls property-slider"><label>尺度 a：x(at)<output>{scaleFactor.toFixed(2)}</output><input type="range" min="0.25" max="3" step="0.05" value={scaleFactor} onChange={(event) => setScaleFactor(Number(event.target.value))} /></label><button type="button" className="slider-reset" aria-label="恢复尺度因子为 1" onClick={() => setScaleFactor(1)}>恢复默认</button></div>}
       </>}
       <div className="plot-grid">
         <article className="plot-panel">
           <div className="plot-heading"><div><p>{direction === "forward" ? "输入信号" : "频域输入"}</p><h2>{direction === "forward" ? (domainMode === "continuous" ? "时域 x(t)" : "时域 x[n]") : (domainMode === "continuous" ? "频域 X(ω)" : "频域 X[k]")}</h2></div><span className="domain-pill">{direction === "forward" ? domainRangeLabel : "复频谱"}</span></div>
-          {direction === "forward" ? <SignalPlot id="time-main" label="时域输入信号" points={signal} mode={domainMode} zoom={timeZoom} accent="cyan" markerLabel="x" onPointerDown={propertyId === "timeShift" && transformKind === "fourier" ? (event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingTime(true); updateTimeShift(event); } : undefined} onPointerMove={draggingTime ? updateTimeShift : undefined} onPointerUp={(event) => { event.preventDefault(); if (draggingTime && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingTime(false); }} /> : <FrequencyPlot points={displayInverseSpectrum} zoom={frequencyZoom} label="逆变换频域输入" />}
+          {direction === "forward" ? <SignalPlot id="time-main" label="时域输入信号" points={signal} mode={domainMode} zoom={timeZoom} accent="cyan" markerLabel="x" onPointerDown={propertyId === "timeShift" && transformKind === "fourier" ? (event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingTime(true); updateTimeShift(event); } : undefined} onPointerMove={draggingTime ? updateTimeShift : undefined} onPointerUp={(event) => { event.preventDefault(); if (draggingTime && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingTime(false); }} /> : <FrequencyPlot points={displayInverseSpectrum} zoom={frequencyZoom} label="逆变换频域输入" discreteBins={domainMode === "discrete"} />}
           <ZoomControl label={direction === "forward" ? "时域缩放" : "频域缩放"} value={direction === "forward" ? timeZoom : frequencyZoom} onChange={direction === "forward" ? setTimeZoom : setFrequencyZoom} />
         </article>
         <article className="plot-panel">
-          <div className="plot-heading"><div><p>{transformTitle}</p><h2>{direction === "forward" ? (transformKind === "fourier" ? "频域 |X(ω)| 与 ∠X" : transformKind === "laplace" ? "s 域 |X(s)|" : "z 域 |X(z)|") : (domainMode === "continuous" ? "时域重建 x(t)" : "离散重建 x[n]")}</h2></div><span className="domain-pill">{direction === "forward" ? "复数数值计算" : "逆变换重建"}</span></div>
-          {direction === "forward" ? <FrequencyPlot points={displaySpectrum} zoom={frequencyZoom} label="傅里叶频谱与相位" /> : <SignalPlot id="inverse-time" label="逆傅里叶重建信号" points={inverseTime} mode={domainMode} zoom={timeZoom} accent="violet" markerLabel="x" />}
+          <div className="plot-heading"><div><p>{transformTitle}</p><h2>{direction === "forward" ? (transformKind === "fourier" ? (domainMode === "continuous" ? "频域 |X(ω)| 与 ∠X" : "离散频域 |X[k]| 与 ∠X[k]") : transformKind === "laplace" ? "s 域 |X(s)|" : "z 域 |X(z)|") : (domainMode === "continuous" ? "时域重建 x(t)" : "离散重建 x[n]")}</h2></div><span className="domain-pill">{direction === "forward" ? "复数数值计算" : "逆变换重建"}</span></div>
+          {direction === "forward" ? <FrequencyPlot points={displaySpectrum} zoom={frequencyZoom} label="傅里叶频谱与相位" discreteBins={domainMode === "discrete" && transformKind === "fourier"} /> : <SignalPlot id="inverse-time" label="逆傅里叶重建信号" points={inverseTime} mode={domainMode} zoom={timeZoom} accent="violet" markerLabel="x" />}
           <ZoomControl label={direction === "forward" ? "频域缩放" : "时域缩放"} value={direction === "forward" ? frequencyZoom : timeZoom} onChange={direction === "forward" ? setFrequencyZoom : setTimeZoom} />
         </article>
       </div>
       {direction === "forward" && transformKind === "fourier" && propertyView && <section className="property-explorer" aria-label={`${selectedProperty.label}的图形验证`}>
         <div className="property-explorer-heading"><div><p>性质图形验证</p><h2>{selectedProperty.label}：时域与频域同步</h2></div>{propertyView.metrics && <div className="property-metrics">{propertyView.metrics.map((metric) => <span key={metric.label}><small>{metric.label}</small><b>{metric.value}</b></span>)}</div>}</div>
         <SeriesVisibility series={propertyView.time} visible={propertySeriesVisible} onChange={togglePropertySeries} />
-        <div className="plot-grid property-plot-grid"><article className="plot-panel"><div className="plot-heading"><div><p>时域关系</p><h2>{selectedProperty.time}</h2></div></div><MultiSignalPlot id={`property-time-${propertyId}`} label={`${selectedProperty.label}时域关系`} series={propertyView.time} mode={domainMode} zoom={timeZoom} visible={propertySeriesVisible} /></article><article className="plot-panel"><div className="plot-heading"><div><p>频域关系</p><h2>{selectedProperty.frequency}</h2></div></div><SeriesVisibility series={propertyView.frequency} visible={propertySeriesVisible} onChange={togglePropertySeries} /><MultiSpectrumPlot id={`property-frequency-${propertyId}`} label={`${selectedProperty.label}频域关系`} series={propertyView.frequency} zoom={frequencyZoom} visible={propertySeriesVisible} /></article></div>
+        <div className="plot-grid property-plot-grid"><article className="plot-panel"><div className="plot-heading"><div><p>时域关系</p><h2>{selectedProperty.time}</h2></div></div><MultiSignalPlot id={`property-time-${propertyId}`} label={`${selectedProperty.label}时域关系`} series={propertyView.time} mode={domainMode} zoom={timeZoom} visible={propertySeriesVisible} /></article><article className="plot-panel"><div className="plot-heading"><div><p>频域关系</p><h2>{selectedProperty.frequency}</h2></div></div><SeriesVisibility series={propertyView.frequency} visible={propertySeriesVisible} onChange={togglePropertySeries} /><MultiSpectrumPlot id={`property-frequency-${propertyId}`} label={`${selectedProperty.label}频域关系`} series={propertyView.frequency} mode={domainMode} zoom={frequencyZoom} visible={propertySeriesVisible} /></article></div>
       </section>}
     </section>}
     {toolMode === "convolution" && <section className="workspace" aria-label="卷积工作台">
@@ -519,7 +554,7 @@ export function SignalWorkbench() {
         <label className="expression-input"><span className="cyan-text">x</span> 函数<input value={firstExpression} onChange={(event) => setFirstExpression(event.target.value)} spellCheck="false" /></label>
         <label>h({domainMode === "continuous" ? "t" : "n"})<select value={secondPreset} onChange={(event) => choosePreset(event.target.value, "second")}>{displayPresetOptions(domainMode)}</select></label>
         <label className="expression-input"><span className="pink-text">h</span> 函数<input value={secondExpression} onChange={(event) => setSecondExpression(event.target.value)} spellCheck="false" /></label>
-        {domainMode === "discrete" && <label className="sample-count-control">离散点数 N<input type="number" min="16" max="1024" step="1" value={discreteSampleCount} onChange={(event) => setDiscreteSampleCount(clamp(Number(event.target.value) || 16, 16, 1024))} /><input aria-label="离散采样点滑动调节" type="range" min="16" max="1024" step="1" value={discreteSampleCount} onChange={(event) => setDiscreteSampleCount(Number(event.target.value))} /></label>}
+        {domainMode === "discrete" && <SampleCountControl id="convolution-sample-count" value={discreteSampleCount} onChange={setDiscreteSampleCount} />}
         <span className={convolutionError ? "status-dot error" : "status-dot"}>{convolutionError ? `卷积暂停：${convolutionError}` : "FFT 数值卷积"}</span>
       </div>
       <div className="shortcut-bar convolution-shortcuts" aria-label="数学符号快捷输入">{SHORTCUTS.slice(0, 12).map(([label, token]) => <button key={label} type="button" onClick={() => setFirstExpression((current) => `${current}${token}`)}>{label}</button>)}</div>

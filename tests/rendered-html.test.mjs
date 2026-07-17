@@ -56,12 +56,17 @@ test("keeps real-time transforms and offline distribution wired into the project
   assert.match(workbench, /convolutionFrame/);
   assert.match(workbench, /propertyId/);
   assert.match(workbench, /linearA/);
+  assert.match(workbench, /spectrum-bin-stem/);
+  assert.match(workbench, /MAX_ZOOM = 16/);
+  assert.match(workbench, /DEFAULT_DISCRETE_SAMPLE_COUNT = 128/);
+  assert.match(workbench, /slider-reset/);
   assert.match(engine, /export function convolutionFrame/);
   assert.match(engine, /export function linearCombineSignals/);
   assert.match(engine, /export function parsevalEnergy/);
   assert.match(engine, /nextPowerOfTwo/);
   assert.match(cube, /discrete/);
   assert.match(cube, /frequencyX/);
+  assert.match(cube, /resetAmplitude/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /Content-Security-Policy/);
   assert.match(packageJson, /"build": "vinext build"/);

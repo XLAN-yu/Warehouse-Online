@@ -239,6 +239,13 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     if (source === "demo") setDemoDrafts((drafts) => ({ ...drafts, [mode]: update(drafts[mode]) }));
     else setCurrentDrafts((drafts) => ({ ...drafts, [mode]: update(drafts[mode]) }));
   };
+  const resetAmplitude = (id: string) => {
+    const demoDefaults = mode === "continuous" ? DEMO_CONTINUOUS : DEMO_DISCRETE;
+    const amplitude = source === "demo"
+      ? demoDefaults.find((component) => component.id === id)?.amplitude ?? 0.5
+      : currentComponents.find((component) => component.id === id)?.amplitude ?? 0.5;
+    updateAmplitude(id, amplitude);
+  };
   const addComponent = () => {
     if (componentCount >= 8) return;
     const component: FrequencyComponent = {
@@ -425,9 +432,10 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
             <button type="button" className="component-editor-select" onClick={() => selectSlice(index)}><b>k{index + 1}</b><span>{componentFrequency(component, mode, true)}</span></button>
             <input aria-label={`分量 k${index + 1} 的幅度`} type="range" min="0" max={Math.max(AMPLITUDE_FLOOR, Math.ceil(displayAmplitudeLimit * 2) / 2)} step="0.01" value={component.amplitude} onChange={(event) => updateAmplitude(component.id, Number(event.target.value))} />
             <output>A {round(component.amplitude, 2)}</output>
+            <button type="button" className="slider-reset" aria-label={`恢复分量 k${index + 1} 的默认幅度`} onClick={() => resetAmplitude(component.id)}>恢复默认</button>
           </div>)}
         </div>
-        {componentCount > 0 && <label className="slice-picker">当前切片 <output>k{selectedIndex + 1} / {componentCount}</output><input type="range" min="0" max={componentCount - 1} step="1" value={selectedIndex} onChange={(event) => selectSlice(Number(event.target.value))} /></label>}
+        {componentCount > 0 && <div className="slice-picker"><label>当前切片 <output>k{selectedIndex + 1} / {componentCount}</output><input aria-label="当前时频立方体切片" type="range" min="0" max={componentCount - 1} step="1" value={selectedIndex} onChange={(event) => selectSlice(Number(event.target.value))} /></label><button type="button" className="slider-reset" aria-label="恢复默认切片为 k1" onClick={() => selectSlice(0)}>恢复默认</button></div>}
         <p className="cube-semantic-note">“当前表达式主分量”由实时采样后的频谱峰数值重建；滑块与新增分量会同步改变各切片、右侧同色频谱峰和最前方的主分量合成波形，但不会改写顶部函数表达式。</p>
       </aside>
     </div>
