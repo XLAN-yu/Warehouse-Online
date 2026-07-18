@@ -33,11 +33,11 @@ test("server-renders the Signal Lab workbench", async () => {
   assert.match(html, /Signal Lab/);
   assert.match(html, /连续时间/);
   assert.match(html, /离散时间/);
-  assert.match(html, /傅里叶性质/);
+  assert.match(html, /时频变换/);
   assert.match(html, /时频立方体/);
   assert.match(html, /傅里叶几何/);
   assert.match(html, /旋转向量 · 实时叠加波形/);
-  assert.match(html, /实时数值采样/);
+  assert.match(html, /自定义频率分量/);
   assert.match(html, /og:image/);
   assert.match(html, /Content-Security-Policy/);
 });
@@ -63,6 +63,7 @@ test("keeps real-time transforms and offline distribution wired into the project
   assert.match(workbench, /MAX_ZOOM = 16/);
   assert.match(workbench, /DEFAULT_DISCRETE_SAMPLE_COUNT = 128/);
   assert.match(workbench, /slider-reset/);
+  assert.match(workbench, /useState<ToolMode>\("geometry"\)/);
   assert.match(engine, /export function convolutionFrame/);
   assert.match(engine, /export function linearCombineSignals/);
   assert.match(engine, /export function parsevalEnergy/);
@@ -70,9 +71,13 @@ test("keeps real-time transforms and offline distribution wired into the project
   assert.match(cube, /discrete/);
   assert.match(cube, /frequencyX/);
   assert.match(cube, /resetAmplitude/);
+  assert.match(cube, /updateFrequency/);
+  assert.match(cube, /component-frequency-editor/);
   assert.match(geometry, /requestAnimationFrame/);
   assert.match(geometry, /旋转向量 · 实时叠加波形/);
   assert.match(geometry, /谐波个数/);
+  assert.match(geometry, /customComponents/);
+  assert.match(geometry, /添加频率/);
   assert.match(geometry, /恢复默认/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /Content-Security-Policy/);

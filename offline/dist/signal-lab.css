@@ -191,6 +191,16 @@ button { cursor: pointer; }
 .geometry-range-control label { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 9px; color: #9faed0; font-size: 12px; }
 .geometry-range-control output { color: #dfeaff; font-family: var(--font-geist-mono), Consolas, monospace; text-align: right; }
 .geometry-range-control input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: #8bdeef; }
+.geometry-custom-components { display: grid; gap: 7px; margin-top: 3px; padding-top: 12px; border-top: 1px solid rgba(166, 186, 216, .12); }
+.geometry-custom-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #aab9cf; font-size: 12px; }
+.geometry-custom-empty { margin: 0; color: #8d9db8; font-size: 11px; line-height: 1.5; }
+.geometry-custom-row { display: grid; grid-template-columns: minmax(76px, .85fr) minmax(86px, 1fr) auto auto; align-items: end; gap: 6px; padding: 7px 0; border-top: 1px solid rgba(166, 186, 216, .08); }
+.geometry-custom-row label { display: grid; gap: 4px; min-width: 0; color: #9faed0; font-size: 10px; }
+.geometry-custom-row label span { font-family: var(--font-geist-mono), Consolas, monospace; }
+.geometry-custom-row input[type="number"], .component-frequency-editor input { width: 100%; min-width: 0; padding: 5px 6px; border: 1px solid rgba(148, 182, 213, .23); border-radius: 5px; color: #e5f3ff; background: rgba(2, 7, 15, .48); font-family: var(--font-geist-mono), Consolas, monospace; font-size: 11px; text-align: right; }
+.geometry-custom-row input[type="number"]:focus, .component-frequency-editor input:focus { outline: none; border-color: #79e2f2; box-shadow: 0 0 0 2px rgba(82, 213, 236, .12); }
+.geometry-custom-row input[type="range"] { width: 100%; accent-color: #b49bff; }
+.geometry-custom-row output { min-width: 40px; padding-bottom: 5px; color: #e3edf9; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 11px; text-align: right; }
 .geometry-formula { display: grid; gap: 5px; margin-top: 3px; padding-top: 12px; border-top: 1px solid rgba(166, 186, 216, .12); }
 .geometry-formula > span { color: #8194b3; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .geometry-formula code { overflow: hidden; color: #c7c0ff; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -330,13 +340,15 @@ button { cursor: pointer; }
 .add-component { border: 1px solid rgba(111, 227, 245, .3); border-radius: 6px; padding: 5px 7px; color: #bff5fb; background: rgba(75, 210, 231, .1); font-size: 11px; }
 .add-component:hover:not(:disabled) { border-color: #71e6f4; background: rgba(75, 210, 231, .2); }
 .add-component:disabled { cursor: not-allowed; opacity: .42; }
-.component-editor-row { display: grid; grid-template-columns: minmax(82px, .8fr) minmax(90px, 1fr) auto auto; align-items: center; gap: 8px; padding: 7px 6px; border: 1px solid transparent; border-radius: 6px; }
+.component-editor-row { display: grid; grid-template-columns: minmax(72px, .72fr) minmax(58px, .56fr) minmax(82px, 1fr) auto auto; align-items: center; gap: 7px; padding: 7px 6px; border: 1px solid transparent; border-radius: 6px; }
 .component-editor-row.selected { border-color: color-mix(in srgb, var(--slice-color) 54%, transparent); background: color-mix(in srgb, var(--slice-color) 8%, transparent); }
 .component-editor-select { display: flex; align-items: baseline; gap: 5px; min-width: 0; border: 0; color: #9badc4; background: transparent; text-align: left; }
 .component-editor-select:hover { color: #effbff; }
 .component-editor-select b { color: var(--slice-color); font-family: var(--font-geist-mono), Consolas, monospace; font-size: 12px; }
 .component-editor-select span { overflow: hidden; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.component-editor-row input { width: 100%; accent-color: var(--slice-color); }
+.component-editor-row input[type="range"] { width: 100%; accent-color: var(--slice-color); }
+.component-frequency-editor { display: grid; gap: 3px; min-width: 0; color: #9badc4; font-size: 9px; }
+.component-frequency-editor span { font-family: var(--font-geist-mono), Consolas, monospace; }
 .component-editor-row output { min-width: 42px; color: #e3edf9; font-family: var(--font-geist-mono), Consolas, monospace; font-size: 11px; text-align: right; }
 
 @media (max-width: 920px) {
@@ -352,7 +364,7 @@ button { cursor: pointer; }
   .property-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .property-controls .expression-input { grid-column: auto; }
   .property-slider label { grid-template-columns: auto auto minmax(130px, 1fr); }
-  .component-editor-row { grid-template-columns: minmax(76px, .75fr) minmax(82px, 1fr) auto auto; gap: 6px; }
+  .component-editor-row { grid-template-columns: minmax(72px, .72fr) minmax(58px, .55fr) minmax(82px, 1fr) auto auto; gap: 6px; }
 }
 
 @media (max-width: 680px) {
@@ -385,6 +397,8 @@ button { cursor: pointer; }
   .geometry-svg { min-height: 250px; }
   .geometry-range-control label { grid-template-columns: 1fr; }
   .geometry-range-control output { text-align: left; }
+  .geometry-custom-row { grid-template-columns: minmax(80px, 1fr) auto auto; }
+  .geometry-custom-row label:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
   .cube-source-toggle { width: 100%; }
   .cube-stage { min-height: 335px; }
   .tf-cube-wrap { transform: scale(.63); transform-origin: center; }
@@ -392,6 +406,7 @@ button { cursor: pointer; }
   .cube-view-controls > span { width: 100%; margin-left: 0; }
   .slice-picker { grid-template-columns: minmax(0, 1fr) auto auto; }
   .slice-picker input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
-  .component-editor-row { grid-template-columns: minmax(75px, .8fr) minmax(70px, 1fr) auto auto; gap: 5px; }
+  .component-editor-row { grid-template-columns: minmax(72px, 1fr) minmax(64px, .76fr) auto auto; gap: 5px; }
+  .component-editor-row input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
   .component-editor-row .slider-reset { padding-inline: 6px; }
 }

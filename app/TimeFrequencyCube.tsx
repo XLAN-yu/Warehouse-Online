@@ -239,6 +239,17 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
     if (source === "demo") setDemoDrafts((drafts) => ({ ...drafts, [mode]: update(drafts[mode]) }));
     else setCurrentDrafts((drafts) => ({ ...drafts, [mode]: update(drafts[mode]) }));
   };
+  const updateFrequency = (id: string, omega: number) => {
+    const maximum = mode === "continuous" ? 2 * Math.PI * 20 : 0.99 * Math.PI;
+    const minimum = mode === "continuous" ? 2 * Math.PI * 0.01 : 0.01 * Math.PI;
+    const next = components
+      .map((component) => component.id === id ? { ...component, omega: clamp(omega, minimum, maximum) } : component)
+      .sort((left, right) => left.omega - right.omega);
+    const selectedNextIndex = next.findIndex((component) => component.id === id);
+    if (source === "demo") setDemoDrafts((drafts) => ({ ...drafts, [mode]: next }));
+    else setCurrentDrafts((drafts) => ({ ...drafts, [mode]: next }));
+    setSelectedIndex(selectedNextIndex);
+  };
   const resetAmplitude = (id: string) => {
     const demoDefaults = mode === "continuous" ? DEMO_CONTINUOUS : DEMO_DISCRETE;
     const amplitude = source === "demo"
@@ -427,16 +438,17 @@ export function TimeFrequencyCube({ signal, spectrum, mode }: { signal: Point[];
           </dl>
         </> : <p className="cube-warning">当前信号没有检测到显著正频率分量。可直接新增一个分量，或切换至示范数据。</p>}
         <div className="component-editor">
-          <div className="component-editor-heading"><span>分量幅度（实时）</span><button className="add-component" type="button" disabled={componentCount >= 8} onClick={addComponent}>＋ 增加分量</button></div>
+          <div className="component-editor-heading"><span>分量参数（实时）</span><button className="add-component" type="button" disabled={componentCount >= 8} onClick={addComponent}>＋ 增加分量</button></div>
           {components.map((component, index) => <div key={component.id} className={index === selectedIndex ? "component-editor-row selected" : "component-editor-row"} style={{ "--slice-color": SLICE_COLORS[index % SLICE_COLORS.length] } as CSSProperties}>
             <button type="button" className="component-editor-select" onClick={() => selectSlice(index)}><b>k{index + 1}</b><span>{componentFrequency(component, mode, true)}</span></button>
+            <label className="component-frequency-editor"><span>{mode === "continuous" ? "f / Hz" : "Ω / π"}</span><input aria-label={`分量 k${index + 1} 的频率`} type="number" min="0.01" max={mode === "continuous" ? "20" : "0.99"} step="0.01" value={round(mode === "continuous" ? component.omega / (2 * Math.PI) : component.omega / Math.PI, 3)} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateFrequency(component.id, mode === "continuous" ? value * 2 * Math.PI : value * Math.PI); }} /></label>
             <input aria-label={`分量 k${index + 1} 的幅度`} type="range" min="0" max={Math.max(AMPLITUDE_FLOOR, Math.ceil(displayAmplitudeLimit * 2) / 2)} step="0.01" value={component.amplitude} onChange={(event) => updateAmplitude(component.id, Number(event.target.value))} />
             <output>A {round(component.amplitude, 2)}</output>
             <button type="button" className="slider-reset" aria-label={`恢复分量 k${index + 1} 的默认幅度`} onClick={() => resetAmplitude(component.id)}>恢复默认</button>
           </div>)}
         </div>
         {componentCount > 0 && <div className="slice-picker"><label>当前切片 <output>k{selectedIndex + 1} / {componentCount}</output><input aria-label="当前时频立方体切片" type="range" min="0" max={componentCount - 1} step="1" value={selectedIndex} onChange={(event) => selectSlice(Number(event.target.value))} /></label><button type="button" className="slider-reset" aria-label="恢复默认切片为 k1" onClick={() => selectSlice(0)}>恢复默认</button></div>}
-        <p className="cube-semantic-note">“当前表达式主分量”由实时采样后的频谱峰数值重建；滑块与新增分量会同步改变各切片、右侧同色频谱峰和最前方的主分量合成波形，但不会改写顶部函数表达式。</p>
+        <p className="cube-semantic-note">“当前表达式主分量”由实时采样后的频谱峰数值重建；幅度滑块、频率输入与新增分量会同步改变各切片、右侧同色频谱峰和最前方的主分量合成波形，但不会改写顶部函数表达式。</p>
       </aside>
     </div>
   </section>;

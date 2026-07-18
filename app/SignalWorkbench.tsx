@@ -280,7 +280,7 @@ function displayPresetOptions(mode: DomainMode) {
 export function SignalWorkbench() {
   const domainSnapshots = useRef<Record<DomainMode, DomainSnapshot>>({ continuous: createDomainSnapshot("continuous"), discrete: createDomainSnapshot("discrete") });
   const [domainMode, setDomainMode] = useState<DomainMode>("continuous");
-  const [toolMode, setToolMode] = useState<ToolMode>("transform");
+  const [toolMode, setToolMode] = useState<ToolMode>("geometry");
   const [transformKind, setTransformKind] = useState<TransformKind>("fourier");
   const [direction, setDirection] = useState<TransformDirection>("forward");
   const [preset, setPreset] = useState(defaultPreset("continuous"));
