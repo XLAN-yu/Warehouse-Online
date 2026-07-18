@@ -28,9 +28,10 @@ import {
   type DomainMode,
   type Point,
 } from "./signalEngine";
+import { FourierGeometryLab } from "./FourierGeometryLab";
 import { TimeFrequencyCube } from "./TimeFrequencyCube";
 
-type ToolMode = "transform" | "convolution" | "cube";
+type ToolMode = "transform" | "convolution" | "cube" | "geometry";
 type TransformKind = "fourier" | "laplace" | "z";
 type TransformDirection = "forward" | "inverse";
 type InverseSource = "current" | "formula";
@@ -502,7 +503,7 @@ export function SignalWorkbench() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark" aria-hidden="true" />Signal Lab</div>
       <div className="tab-group" role="group" aria-label="信号类型"><button className={domainMode === "continuous" ? "tab active" : "tab"} onClick={() => switchDomain("continuous")}>连续时间</button><button className={domainMode === "discrete" ? "tab active" : "tab"} onClick={() => switchDomain("discrete")}>离散时间</button></div>
-      <div className="tab-group" role="group" aria-label="分析工具"><button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button><button className={toolMode === "convolution" ? "tab active" : "tab"} onClick={() => setToolMode("convolution")}>卷积</button><button className={toolMode === "cube" ? "tab active" : "tab"} onClick={() => setToolMode("cube")}>时频立方体</button></div>
+      <div className="tab-group" role="group" aria-label="分析工具"><button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button><button className={toolMode === "convolution" ? "tab active" : "tab"} onClick={() => setToolMode("convolution")}>卷积</button><button className={toolMode === "cube" ? "tab active" : "tab"} onClick={() => setToolMode("cube")}>时频立方体</button><button className={toolMode === "geometry" ? "tab active" : "tab"} onClick={() => setToolMode("geometry")}>傅里叶几何</button></div>
     </header>
 
     {toolMode === "transform" && <section className="workspace" aria-label="傅里叶变换工作台">
@@ -575,6 +576,7 @@ export function SignalWorkbench() {
         <article className="plot-panel"><div className="plot-heading"><div><p>实时卷积结果</p><h2>y(τ) = ∫x(t)h(τ − t)dt</h2></div><span className="domain-pill">{domainMode === "continuous" ? "数值积分" : "逐项求和"}</span></div><SignalPlot id="convolution-result" label="实时卷积结果" points={convolutionResult} mode={domainMode} zoom={timeZoom} accent="violet" markerIndex={resultMarker} markerLabel="y" /><div className="result-readout"><span>当前位置 {convolutionShiftLabel}</span><strong>y = {liveConvolutionValue.toFixed(4)}</strong></div></article>
       </div>
     </section>}
+    <section className="geometry-host" hidden={toolMode !== "geometry"} aria-label="傅里叶几何合成工作台"><FourierGeometryLab active={toolMode === "geometry"} /></section>
     <section className="cube-host" hidden={toolMode !== "cube"} aria-label="时频立方体工作台"><TimeFrequencyCube signal={signal} spectrum={fourier.points} mode={domainMode} /></section>
   </main>;
 }

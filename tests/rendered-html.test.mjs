@@ -35,17 +35,20 @@ test("server-renders the Signal Lab workbench", async () => {
   assert.match(html, /离散时间/);
   assert.match(html, /傅里叶性质/);
   assert.match(html, /时频立方体/);
+  assert.match(html, /傅里叶几何/);
+  assert.match(html, /旋转向量 · 实时叠加波形/);
   assert.match(html, /实时数值采样/);
   assert.match(html, /og:image/);
   assert.match(html, /Content-Security-Policy/);
 });
 
 test("keeps real-time transforms and offline distribution wired into the project", async () => {
-  const [workbench, engine, cube, layout, packageJson, offlineReadme] =
+  const [workbench, engine, cube, geometry, layout, packageJson, offlineReadme] =
     await Promise.all([
       readFile(new URL("../app/SignalWorkbench.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/signalEngine.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/TimeFrequencyCube.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/FourierGeometryLab.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
       readFile(new URL("../package.json", import.meta.url), "utf8"),
       readFile(new URL("../offline/README.md", import.meta.url), "utf8"),
@@ -67,6 +70,10 @@ test("keeps real-time transforms and offline distribution wired into the project
   assert.match(cube, /discrete/);
   assert.match(cube, /frequencyX/);
   assert.match(cube, /resetAmplitude/);
+  assert.match(geometry, /requestAnimationFrame/);
+  assert.match(geometry, /旋转向量 · 实时叠加波形/);
+  assert.match(geometry, /谐波个数/);
+  assert.match(geometry, /恢复默认/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /Content-Security-Policy/);
   assert.match(packageJson, /"build": "vinext build"/);
