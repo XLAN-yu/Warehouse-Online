@@ -38,17 +38,24 @@ test("server-renders the Signal Lab workbench", async () => {
   assert.match(html, /傅里叶几何/);
   assert.match(html, /旋转向量 · 实时叠加波形/);
   assert.match(html, /自定义频率分量/);
+  assert.match(html, /DSP 实验/);
+  assert.match(html, /DFT、FFT、频谱采样与 FM 实验/);
+  assert.match(html, /DFT 性质/);
+  assert.match(html, /频谱采样/);
+  assert.match(html, /FFT 蝶形/);
+  assert.match(html, /FM 频谱/);
   assert.match(html, /og:image/);
   assert.match(html, /Content-Security-Policy/);
 });
 
 test("keeps real-time transforms and offline distribution wired into the project", async () => {
-  const [workbench, engine, cube, geometry, layout, packageJson, offlineReadme] =
+  const [workbench, engine, cube, geometry, dsp, layout, packageJson, offlineReadme] =
     await Promise.all([
       readFile(new URL("../app/SignalWorkbench.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/signalEngine.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/TimeFrequencyCube.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/FourierGeometryLab.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/DspConceptLab.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
       readFile(new URL("../package.json", import.meta.url), "utf8"),
       readFile(new URL("../offline/README.md", import.meta.url), "utf8"),
@@ -78,6 +85,10 @@ test("keeps real-time transforms and offline distribution wired into the project
   assert.match(geometry, /谐波个数/);
   assert.match(geometry, /customComponents/);
   assert.match(geometry, /添加频率/);
+  assert.match(dsp, /DftUnitCircle/);
+  assert.match(dsp, /circularConvolution/);
+  assert.match(dsp, /fftStages/);
+  assert.match(dsp, /Carson/);
   assert.match(geometry, /恢复默认/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /Content-Security-Policy/);

@@ -30,8 +30,9 @@ import {
 } from "./signalEngine";
 import { FourierGeometryLab } from "./FourierGeometryLab";
 import { TimeFrequencyCube } from "./TimeFrequencyCube";
+import { DspConceptLab } from "./DspConceptLab";
 
-type ToolMode = "transform" | "convolution" | "cube" | "geometry";
+type ToolMode = "transform" | "convolution" | "cube" | "geometry" | "dsp";
 type TransformKind = "fourier" | "laplace" | "z";
 type TransformDirection = "forward" | "inverse";
 type InverseSource = "current" | "formula";
@@ -503,7 +504,7 @@ export function SignalWorkbench() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark" aria-hidden="true" />Signal Lab</div>
       <div className="tab-group" role="group" aria-label="信号类型"><button className={domainMode === "continuous" ? "tab active" : "tab"} onClick={() => switchDomain("continuous")}>连续时间</button><button className={domainMode === "discrete" ? "tab active" : "tab"} onClick={() => switchDomain("discrete")}>离散时间</button></div>
-      <div className="tab-group" role="group" aria-label="分析工具"><button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button><button className={toolMode === "convolution" ? "tab active" : "tab"} onClick={() => setToolMode("convolution")}>卷积</button><button className={toolMode === "cube" ? "tab active" : "tab"} onClick={() => setToolMode("cube")}>时频立方体</button><button className={toolMode === "geometry" ? "tab active" : "tab"} onClick={() => setToolMode("geometry")}>傅里叶几何</button></div>
+      <div className="tab-group" role="group" aria-label="分析工具"><button className={toolMode === "transform" ? "tab active" : "tab"} onClick={() => setToolMode("transform")}>时频变换</button><button className={toolMode === "convolution" ? "tab active" : "tab"} onClick={() => setToolMode("convolution")}>卷积</button><button className={toolMode === "cube" ? "tab active" : "tab"} onClick={() => setToolMode("cube")}>时频立方体</button><button className={toolMode === "geometry" ? "tab active" : "tab"} onClick={() => setToolMode("geometry")}>傅里叶几何</button><button className={toolMode === "dsp" ? "tab active" : "tab"} onClick={() => setToolMode("dsp")}>DSP 实验</button></div>
     </header>
 
     {toolMode === "transform" && <section className="workspace" aria-label="傅里叶变换工作台">
@@ -578,5 +579,6 @@ export function SignalWorkbench() {
     </section>}
     <section className="geometry-host" hidden={toolMode !== "geometry"} aria-label="傅里叶几何合成工作台"><FourierGeometryLab active={toolMode === "geometry"} /></section>
     <section className="cube-host" hidden={toolMode !== "cube"} aria-label="时频立方体工作台"><TimeFrequencyCube signal={signal} spectrum={fourier.points} mode={domainMode} /></section>
+    <section className="dsp-host" hidden={toolMode !== "dsp"} aria-label="数字信号处理实验室"><DspConceptLab /></section>
   </main>;
 }
