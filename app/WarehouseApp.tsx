@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type Role = "admin" | "viewer";
+type Role = "admin" | "viewer" | "guest" | "pending";
 type Page =
   | "home"
   | "inbound"
@@ -62,7 +62,7 @@ type WarehouseUser = {
   email: string;
   display_name: string;
   role: Role;
-  last_seen_at: string;
+  last_seen_at?: string;
 };
 type AuditLog = {
   id: string;
@@ -72,6 +72,8 @@ type AuditLog = {
   operator_user_id: string;
 };
 type AppData = {
+  guest?: boolean;
+  pendingApproval?: boolean;
   currentUser: WarehouseUser;
   products: Product[];
   suppliers: Supplier[];
@@ -81,6 +83,17 @@ type AppData = {
 };
 
 type FormLine = { key: string; productId: string; quantity: string; unitPrice: string };
+type GuestDocumentPayload = {
+  type: "inbound" | "outbound";
+  purpose: string;
+  supplierName: string;
+  externalRef: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number }>;
+};
+type GuestStocktakePayload = {
+  purpose: string;
+  items: Array<{ productId: string; countedQuantity: number }>;
+};
 
 const PRODUCT_STATUS: Record<string, { label: string; tone: string }> = {
   normal: { label: "正常供货", tone: "green" },
@@ -90,12 +103,12 @@ const PRODUCT_STATUS: Record<string, { label: string; tone: string }> = {
   paused: { label: "暂停采购", tone: "gray" },
 };
 
-const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: boolean }> = [
+const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: boolean; guestAllowed?: boolean }> = [
   { page: "home", label: "工作台", glyph: "⌂" },
-  { page: "inbound", label: "入库登记", glyph: "↘", adminOnly: true },
-  { page: "outbound", label: "出库登记", glyph: "↗", adminOnly: true },
+  { page: "inbound", label: "入库登记", glyph: "↘", adminOnly: true, guestAllowed: true },
+  { page: "outbound", label: "出库登记", glyph: "↗", adminOnly: true, guestAllowed: true },
   { page: "inventory", label: "查看库存", glyph: "▦" },
-  { page: "stocktake", label: "库存盘点", glyph: "✓", adminOnly: true },
+  { page: "stocktake", label: "库存盘点", glyph: "✓", adminOnly: true, guestAllowed: true },
   { page: "reports", label: "库存报表", glyph: "▤" },
   { page: "records", label: "流水记录", glyph: "≡" },
   { page: "products", label: "商品资料", glyph: "◇", adminOnly: true },
@@ -325,7 +338,8 @@ function Dashboard({
   onNavigate: (page: Page) => void;
 }) {
   const { products, documents, currentUser } = data;
-  const isAdmin = currentUser.role === "admin";
+  const canOperate = currentUser.role === "admin" || currentUser.role === "guest";
+  const canSeeMoney = currentUser.role !== "viewer";
   const today = new Date().toISOString().slice(0, 10);
   const activeToday = documents.filter(
     (document) => document.status === "active" && document.effective_at.startsWith(today),
@@ -354,19 +368,19 @@ function Dashboard({
       </section>
 
       <section className="quick-grid">
-        <button className="quick-card inbound" onClick={() => onNavigate(isAdmin ? "inbound" : "inventory")}>
+        <button className="quick-card inbound" onClick={() => onNavigate(canOperate ? "inbound" : "inventory")}>
           <span className="quick-icon">↘</span>
-          <div><small>{isAdmin ? "快速登记" : "实时查看"}</small><strong>{isAdmin ? "商品入库" : "查看库存"}</strong><p>{isAdmin ? "支持多商品与图片识别" : "金额信息已按权限隐藏"}</p></div>
+          <div><small>{canOperate ? "快速登记" : "实时查看"}</small><strong>{canOperate ? "商品入库" : "查看库存"}</strong><p>{canOperate ? "支持多商品与图片识别" : "金额信息已按权限隐藏"}</p></div>
           <i>→</i>
         </button>
-        <button className="quick-card outbound" onClick={() => onNavigate(isAdmin ? "outbound" : "reports")}>
+        <button className="quick-card outbound" onClick={() => onNavigate(canOperate ? "outbound" : "reports")}>
           <span className="quick-icon">↗</span>
-          <div><small>{isAdmin ? "库存校验" : "数据汇总"}</small><strong>{isAdmin ? "商品出库" : "库存报表"}</strong><p>{isAdmin ? "库存不足时立即拦截" : "日报、月报、年报"}</p></div>
+          <div><small>{canOperate ? "库存校验" : "数据汇总"}</small><strong>{canOperate ? "商品出库" : "库存报表"}</strong><p>{canOperate ? "库存不足时立即拦截" : "日报、月报、年报"}</p></div>
           <i>→</i>
         </button>
-        <button className="quick-card stock" onClick={() => onNavigate(isAdmin ? "stocktake" : "records")}>
+        <button className="quick-card stock" onClick={() => onNavigate(canOperate ? "stocktake" : "records")}>
           <span className="quick-icon">✓</span>
-          <div><small>{isAdmin ? "实盘修正" : "变动追踪"}</small><strong>{isAdmin ? "开始盘点" : "流水记录"}</strong><p>{isAdmin ? "自动生成盘盈盘亏" : "查看所有历史单据"}</p></div>
+          <div><small>{canOperate ? "实盘修正" : "变动追踪"}</small><strong>{canOperate ? "开始盘点" : "流水记录"}</strong><p>{canOperate ? "自动生成盘盈盘亏" : "查看所有历史单据"}</p></div>
           <i>→</i>
         </button>
       </section>
@@ -376,7 +390,7 @@ function Dashboard({
         <article><div className="metric-heading"><span className="dot blue-dot" />今日入库</div><strong>{number(inboundToday)}<small> 件</small></strong><p>{activeToday.filter((document) => document.type === "inbound").length} 张入库单</p></article>
         <article><div className="metric-heading"><span className="dot orange-dot" />今日出库</div><strong>{number(outboundToday)}<small> 件</small></strong><p>{activeToday.filter((document) => document.type === "outbound").length} 张出库单</p></article>
         <article className={lowStock.length ? "alert-metric" : ""}><div className="metric-heading"><span className="dot red-dot" />库存预警</div><strong>{number(lowStock.length)}<small> 种</small></strong><p>{lowStock.length ? "需要及时处理" : "当前库存充足"}</p></article>
-        {isAdmin && <article><div className="metric-heading"><span className="dot violet-dot" />库存金额</div><strong className="money-metric">{money(inventoryValue)}</strong><p>按移动加权平均价</p></article>}
+        {canSeeMoney && <article><div className="metric-heading"><span className="dot violet-dot" />库存金额</div><strong className="money-metric">{money(inventoryValue)}</strong><p>按移动加权平均价</p></article>}
       </section>
 
       <section className="dashboard-grid">
@@ -515,12 +529,14 @@ function DocumentForm({
   editing,
   onSaved,
   onCancelEdit,
+  onGuestDocument,
 }: {
   type: "inbound" | "outbound";
   data: AppData;
   editing: WarehouseDocument | null;
   onSaved: (message: string) => Promise<void>;
   onCancelEdit: () => void;
+  onGuestDocument: (payload: GuestDocumentPayload) => Promise<{ documentNo: string }>;
 }) {
   const firstLines = () =>
     editing?.items.map((item) => ({
@@ -568,15 +584,16 @@ function DocumentForm({
     }
     setSaving(true);
     try {
-      const result = await apiPost({
-        action: "create-document",
+      const requestPayload: GuestDocumentPayload = {
         type,
         purpose,
         supplierName: type === "inbound" ? supplier : "",
         externalRef: type === "inbound" ? reference : "",
-        revisionOf: editing?.id,
         items: validLines.map((line) => ({ productId: line.productId, quantity: Number(line.quantity), unitPrice: Number(line.unitPrice || 0) })),
-      });
+      };
+      const result = data.currentUser.role === "guest"
+        ? await onGuestDocument(requestPayload)
+        : await apiPost({ action: "create-document", ...requestPayload, revisionOf: editing?.id });
       setLines([{ key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "" }]);
       setPurpose(""); setSupplier(""); setReference("");
       await onSaved(`${editing ? "单据已修改" : type === "inbound" ? "入库成功" : "出库成功"}：${String(result.documentNo)}`);
@@ -610,7 +627,7 @@ function DocumentForm({
               <div className="line-product"><small>{String(index + 1).padStart(2, "0")}</small><ProductAutocomplete products={data.products} value={line.productId} onChange={(productId) => updateLine(line.key, { productId })} /></div>
               <div className={`stock-cell ${product && Number(line.quantity) > product.current_stock && type === "outbound" ? "danger" : ""}`}>{product ? <><b>{product.current_stock}</b><small>{product.unit}</small></> : "—"}</div>
               <label className="number-input"><input inputMode="numeric" min="1" step="1" value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} placeholder="0" /><span>{product?.unit ?? "件"}</span></label>
-              {type === "inbound" ? <label className="number-input price-input"><span>¥</span><input inputMode="decimal" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} placeholder="0.00" /></label> : <div className="cost-rule"><strong>移动平均价</strong>{data.currentUser.role === "admin" && product ? <small>当前 {money(product.average_cost_cents)}</small> : <small>提交时自动计算</small>}</div>}
+              {type === "inbound" ? <label className="number-input price-input"><span>¥</span><input inputMode="decimal" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} placeholder="0.00" /></label> : <div className="cost-rule"><strong>移动平均价</strong>{data.currentUser.role !== "viewer" && product ? <small>当前 {money(product.average_cost_cents)}</small> : <small>提交时自动计算</small>}</div>}
               <button type="button" className="remove-line" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}>×</button>
             </div>;
           })}
@@ -636,7 +653,7 @@ function InventoryView({ data }: { data: AppData }) {
       <section className="panel data-panel">
         <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索品名或商品编号" /></label><label className="check-filter"><input type="checkbox" checked={onlyLow} onChange={(event) => setOnlyLow(event.target.checked)} />只看库存预警</label><span className="result-count">{filtered.length} 条结果</span></div>
         {filtered.length ? <div className={`data-table inventory-table ${data.currentUser.role === "viewer" ? "viewer" : ""}`}>
-          <div className="table-head"><span>商品信息</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>默认供应商</span>{data.currentUser.role === "admin" && <><span>平均成本</span><span>库存金额</span></>}</div>
+          <div className="table-head"><span>商品信息</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>默认供应商</span>{data.currentUser.role !== "viewer" && <><span>平均成本</span><span>库存金额</span></>}</div>
           {filtered.map((product) => {
             const low = product.current_stock <= product.min_stock;
             return <div className={`table-row ${low ? "low-row" : ""}`} key={product.id}>
@@ -645,7 +662,7 @@ function InventoryView({ data }: { data: AppData }) {
               <div className="quantity-cell"><strong>{number(product.current_stock)}</strong><small>{product.unit}</small>{low && <em>低库存</em>}</div>
               <div>{product.min_stock} {product.unit}</div>
               <div>{product.default_supplier_name ?? "—"}</div>
-              {data.currentUser.role === "admin" && <><div>{money(product.average_cost_cents)}</div><div className="money-cell">{money((product.average_cost_cents ?? 0) * product.current_stock)}</div></>}
+              {data.currentUser.role !== "viewer" && <><div>{money(product.average_cost_cents)}</div><div className="money-cell">{money((product.average_cost_cents ?? 0) * product.current_stock)}</div></>}
             </div>;
           })}
         </div> : <EmptyState title="没有匹配的商品" detail="请更换搜索词或筛选条件。" />}
@@ -654,7 +671,7 @@ function InventoryView({ data }: { data: AppData }) {
   );
 }
 
-function StocktakeView({ data, onSaved }: { data: AppData; onSaved: (message: string) => Promise<void> }) {
+function StocktakeView({ data, onSaved, onGuestStocktake }: { data: AppData; onSaved: (message: string) => Promise<void>; onGuestStocktake: (payload: GuestStocktakePayload) => Promise<{ documentNo: string }> }) {
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [purpose, setPurpose] = useState("定期盘点");
@@ -667,7 +684,10 @@ function StocktakeView({ data, onSaved }: { data: AppData; onSaved: (message: st
     if (changed.some((product) => !Number.isInteger(Number(counts[product.id])) || Number(counts[product.id]) < 0)) return setError("实盘数量必须是大于或等于 0 的整数。");
     setSaving(true); setError("");
     try {
-      const result = await apiPost({ action: "stocktake", purpose, items: changed.map((product) => ({ productId: product.id, countedQuantity: Number(counts[product.id]) })) });
+      const requestPayload: GuestStocktakePayload = { purpose, items: changed.map((product) => ({ productId: product.id, countedQuantity: Number(counts[product.id]) })) };
+      const result = data.currentUser.role === "guest"
+        ? await onGuestStocktake(requestPayload)
+        : await apiPost({ action: "stocktake", ...requestPayload });
       setCounts({});
       await onSaved(`盘点完成：${String(result.documentNo)}`);
     } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "盘点提交失败。"); }
@@ -713,16 +733,16 @@ function ReportsView({ data }: { data: AppData }) {
   const labels = { day: "日报", month: "月报", year: "年报" };
   return (
     <div className="page-stack">
-      <section className="page-heading report-heading"><div><p className="eyebrow">库存汇总</p><h1>库存报表</h1><p>按当前日期快速生成日报、月报或年报。</p></div><button className="export-button" onClick={() => exportExcel(data.products, filtered, data.currentUser.role === "admin", `库存${labels[period]}-${new Date().toISOString().slice(0, 10)}.xls`)}>⇩ 导出 Excel</button></section>
+      <section className="page-heading report-heading"><div><p className="eyebrow">库存汇总</p><h1>库存报表</h1><p>按当前日期快速生成日报、月报或年报。</p></div><button className="export-button" onClick={() => exportExcel(data.products, filtered, data.currentUser.role !== "viewer", `库存${labels[period]}-${new Date().toISOString().slice(0, 10)}.xls`)}>⇩ 导出 Excel</button></section>
       <div className="period-tabs">{(["day", "month", "year"] as const).map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{labels[item]}</button>)}</div>
       <section className="report-cards">
-        <article><span className="report-icon inbound">↘</span><div><small>入库数量</small><strong>{number(inQty)} <em>件</em></strong><p>{inbound.length} 张入库单</p></div>{data.currentUser.role === "admin" && <b>{money(inValue)}</b>}</article>
-        <article><span className="report-icon outbound">↗</span><div><small>出库数量</small><strong>{number(outQty)} <em>件</em></strong><p>{outbound.length} 张出库单</p></div>{data.currentUser.role === "admin" && <b>{money(outValue)}</b>}</article>
+        <article><span className="report-icon inbound">↘</span><div><small>入库数量</small><strong>{number(inQty)} <em>件</em></strong><p>{inbound.length} 张入库单</p></div>{data.currentUser.role !== "viewer" && <b>{money(inValue)}</b>}</article>
+        <article><span className="report-icon outbound">↗</span><div><small>出库数量</small><strong>{number(outQty)} <em>件</em></strong><p>{outbound.length} 张出库单</p></div>{data.currentUser.role !== "viewer" && <b>{money(outValue)}</b>}</article>
         <article><span className="report-icon stocktake">✓</span><div><small>盘点调整</small><strong>{stocktakes.length} <em>次</em></strong><p>{stocktakes.reduce((sum, document) => sum + document.items.length, 0)} 项盘盈盘亏</p></div></article>
       </section>
       <section className="panel data-panel">
         <div className="panel-heading"><div><p className="eyebrow">{labels[period]}明细</p><h2>{fullDate(new Date().toISOString())}</h2></div><span className="count-pill">{filtered.length}</span></div>
-        {filtered.length ? <div className="report-list">{filtered.map((document) => <div key={document.id}><span className={`activity-icon ${document.type}`}>{document.type === "inbound" ? "↘" : document.type === "outbound" ? "↗" : "✓"}</span><div><strong>{document.document_no}</strong><p>{document.items.map((item) => item.product_name).slice(0, 2).join("、")}{document.items.length > 2 ? "等" : ""}</p></div><span>{document.items.reduce((sum, item) => sum + Math.abs(item.quantity), 0)} 件</span>{data.currentUser.role === "admin" && <b>{document.type === "inbound" ? money(document.items.reduce((sum, item) => sum + item.quantity * (item.unit_price_cents ?? 0), 0)) : document.type === "outbound" ? money(document.items.reduce((sum, item) => sum + item.quantity * (item.unit_cost_cents ?? 0), 0)) : "—"}</b>}<small>{dateTime(document.effective_at)}</small></div>)}</div> : <EmptyState title={`暂无${labels[period]}数据`} detail="该时间范围内还没有有效的出入库或盘点单据。" />}
+        {filtered.length ? <div className="report-list">{filtered.map((document) => <div key={document.id}><span className={`activity-icon ${document.type}`}>{document.type === "inbound" ? "↘" : document.type === "outbound" ? "↗" : "✓"}</span><div><strong>{document.document_no}</strong><p>{document.items.map((item) => item.product_name).slice(0, 2).join("、")}{document.items.length > 2 ? "等" : ""}</p></div><span>{document.items.reduce((sum, item) => sum + Math.abs(item.quantity), 0)} 件</span>{data.currentUser.role !== "viewer" && <b>{document.type === "inbound" ? money(document.items.reduce((sum, item) => sum + item.quantity * (item.unit_price_cents ?? 0), 0)) : document.type === "outbound" ? money(document.items.reduce((sum, item) => sum + item.quantity * (item.unit_cost_cents ?? 0), 0)) : "—"}</b>}<small>{dateTime(document.effective_at)}</small></div>)}</div> : <EmptyState title={`暂无${labels[period]}数据`} detail="该时间范围内还没有有效的出入库或盘点单据。" />}
       </section>
     </div>
   );
@@ -822,7 +842,7 @@ function UsersView({ data, onRefresh }: { data: AppData; onRefresh: (message: st
     catch (error) { window.alert(error instanceof Error ? error.message : "权限修改失败。"); }
     finally { setBusy(""); }
   }
-  return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">账号与可见范围</p><h1>用户权限</h1><p>管理员可操作全部业务；查看者不能执行变动，也无法通过接口或导出查看金额。</p></div></section><section className="role-explainer"><article><span>管</span><div><strong>管理员</strong><p>商品、出入库、盘点、金额、备份与权限管理</p></div></article><article><span>看</span><div><strong>查看者</strong><p>仅查看库存数量、无金额报表与流水记录</p></div></article></section><section className="panel user-list">{data.users.map((user) => <article key={user.id}><div className="avatar">{user.display_name.slice(0, 1).toUpperCase()}</div><div><strong>{user.display_name}{user.id === data.currentUser.id && <em>当前账号</em>}</strong><p>{user.email} · 最近登录 {dateTime(user.last_seen_at)}</p></div><select disabled={busy === user.id} value={user.role} onChange={(event) => void change(user, event.target.value as Role)}><option value="admin">管理员</option><option value="viewer">查看者</option></select></article>)}</section></div>;
+  return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">账号与可见范围</p><h1>用户权限</h1><p>管理员可操作全部业务；查看者不能执行变动，也无法通过接口或导出查看金额。</p></div></section><section className="role-explainer"><article><span>管</span><div><strong>管理员</strong><p>商品、出入库、盘点、金额、备份与权限管理</p></div></article><article><span>看</span><div><strong>查看者</strong><p>仅查看库存数量、无金额报表与流水记录</p></div></article></section><section className="panel user-list">{data.users.map((user) => <article key={user.id}><div className="avatar">{user.display_name.slice(0, 1).toUpperCase()}</div><div><strong>{user.display_name}{user.id === data.currentUser.id && <em>当前账号</em>}</strong><p>{user.email} · 最近登录 {user.last_seen_at ? dateTime(user.last_seen_at) : "尚未进入真实仓库"}</p></div><select disabled={busy === user.id} value={user.role} onChange={(event) => void change(user, event.target.value as Role)}>{user.role === "pending" && <option value="pending" disabled>待审批</option>}<option value="admin">管理员</option><option value="viewer">查看者</option></select></article>)}</section></div>;
 }
 
 function openBackupDb() {
@@ -927,13 +947,116 @@ export function WarehouseApp() {
   const [navOpen, setNavOpen] = useState(false);
   const [editing, setEditing] = useState<WarehouseDocument | null>(null);
 
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 3600);
+  }, []);
+
+  const saveGuestData = useCallback((next: AppData) => {
+    setData(next);
+    localStorage.setItem("warehouse-guest-demo-v1", JSON.stringify(next));
+  }, []);
+
   const refresh = useCallback(async (message?: string) => {
     const response = await fetch("/api/warehouse", { cache: "no-store" });
     const result = (await response.json()) as AppData & { error?: string };
     if (!response.ok) throw new Error(result.error || "数据加载失败。");
-    setData(result);
-    if (message) { setToast(message); window.setTimeout(() => setToast(""), 3600); }
-  }, []);
+    if (result.guest) {
+      const stored = localStorage.getItem("warehouse-guest-demo-v1");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as AppData;
+          if (parsed.guest && Array.isArray(parsed.products) && Array.isArray(parsed.documents)) {
+            setData({ ...parsed, pendingApproval: result.pendingApproval, currentUser: result.currentUser });
+          } else setData(result);
+        } catch { setData(result); }
+      } else setData(result);
+    } else setData(result);
+    if (message) showToast(message);
+  }, [showToast]);
+
+  async function completeAction(message: string) {
+    setEditing(null);
+    if (data?.guest) showToast(message);
+    else await refresh(message);
+    navigate("records");
+  }
+
+  async function simulateGuestDocument(payload: GuestDocumentPayload) {
+    if (!data?.guest) throw new Error("当前不是访客演示模式。");
+    const products = data.products.map((product) => ({ ...product }));
+    const documentId = `guest-d-${crypto.randomUUID()}`;
+    const documentItems: DocumentItem[] = [];
+    for (const source of payload.items) {
+      const product = products.find((entry) => entry.id === source.productId);
+      if (!product) throw new Error("演示商品不存在，请重置演示数据后重试。");
+      const before = product.current_stock;
+      if (payload.type === "outbound" && source.quantity > before) {
+        throw new Error(`${product.name}库存只有 ${before}${product.unit}，最大可出库 ${before}${product.unit}。`);
+      }
+      const priceCents = Math.round(source.unitPrice * 100);
+      const oldAverage = product.average_cost_cents ?? 0;
+      const after = payload.type === "inbound" ? before + source.quantity : before - source.quantity;
+      if (payload.type === "inbound") {
+        product.average_cost_cents = after > 0
+          ? Math.round((before * oldAverage + source.quantity * priceCents) / after)
+          : 0;
+      } else if (after === 0) product.average_cost_cents = 0;
+      product.current_stock = after;
+      documentItems.push({
+        id: `guest-i-${crypto.randomUUID()}`,
+        product_id: product.id,
+        product_code: product.code,
+        product_name: product.name,
+        product_unit: product.unit,
+        quantity: source.quantity,
+        counted_quantity: null,
+        unit_price_cents: payload.type === "inbound" ? priceCents : 0,
+        unit_cost_cents: payload.type === "inbound" ? priceCents : oldAverage,
+        before_quantity: before,
+        after_quantity: after,
+      });
+    }
+    const timestamp = new Date().toISOString();
+    const prefix = payload.type === "inbound" ? "RK" : "CK";
+    const documentNo = `${prefix}-TRY-${String(data.documents.length + 1).padStart(4, "0")}`;
+    const nextDocument: WarehouseDocument = {
+      id: documentId,
+      document_no: documentNo,
+      type: payload.type,
+      purpose: payload.purpose || "访客试用",
+      supplier_id: null,
+      supplier_name: payload.supplierName || null,
+      external_ref: payload.externalRef,
+      status: "active",
+      revision_of: null,
+      operator_name: "访客（演示）",
+      effective_at: timestamp,
+      created_at: timestamp,
+      items: documentItems,
+    };
+    saveGuestData({ ...data, products, documents: [nextDocument, ...data.documents] });
+    return { documentNo };
+  }
+
+  async function simulateGuestStocktake(payload: GuestStocktakePayload) {
+    if (!data?.guest) throw new Error("当前不是访客演示模式。");
+    const products = data.products.map((product) => ({ ...product }));
+    const documentId = `guest-d-${crypto.randomUUID()}`;
+    const documentItems: DocumentItem[] = payload.items.map((source) => {
+      const product = products.find((entry) => entry.id === source.productId);
+      if (!product) throw new Error("演示商品不存在，请重置演示数据后重试。");
+      const before = product.current_stock;
+      const difference = source.countedQuantity - before;
+      product.current_stock = source.countedQuantity;
+      return { id: `guest-i-${crypto.randomUUID()}`, product_id: product.id, product_code: product.code, product_name: product.name, product_unit: product.unit, quantity: difference, counted_quantity: source.countedQuantity, unit_price_cents: 0, unit_cost_cents: product.average_cost_cents ?? 0, before_quantity: before, after_quantity: source.countedQuantity };
+    });
+    const timestamp = new Date().toISOString();
+    const documentNo = `PD-TRY-${String(data.documents.length + 1).padStart(4, "0")}`;
+    const nextDocument: WarehouseDocument = { id: documentId, document_no: documentNo, type: "stocktake", purpose: payload.purpose || "访客试用盘点", supplier_id: null, supplier_name: null, external_ref: "", status: "active", revision_of: null, operator_name: "访客（演示）", effective_at: timestamp, created_at: timestamp, items: documentItems };
+    saveGuestData({ ...data, products, documents: [nextDocument, ...data.documents] });
+    return { documentNo };
+  }
 
   useEffect(() => {
     refresh().catch((error) => setLoadError(error instanceof Error ? error.message : "数据加载失败。" )).finally(() => setLoading(false));
@@ -952,31 +1075,45 @@ export function WarehouseApp() {
   }, [data]);
 
   function navigate(next: Page) {
-    if (data?.currentUser.role === "viewer" && NAV_ITEMS.find((item) => item.page === next)?.adminOnly) return;
+    const item = NAV_ITEMS.find((entry) => entry.page === next);
+    if (item?.adminOnly && data?.currentUser.role === "viewer") return;
+    if (item?.adminOnly && data?.currentUser.role === "guest" && !item.guestAllowed) return;
     setPage(next); setNavOpen(false);
     if (next !== "inbound" && next !== "outbound") setEditing(null);
   }
 
   if (loading) return <main className="loading-screen"><div className="loading-mark"><span /><span /><span /></div><h1>仓储台</h1><p>正在核对库存数据…</p></main>;
   if (loadError || !data) return <main className="error-screen"><span>!</span><h1>暂时无法打开仓库</h1><p>{loadError}</p><button onClick={() => window.location.reload()}>重新加载</button></main>;
-  const visibleNav = NAV_ITEMS.filter((item) => !(item.adminOnly && data.currentUser.role === "viewer"));
+  const visibleNav = NAV_ITEMS.filter((item) => {
+    if (!item.adminOnly) return true;
+    if (data.currentUser.role === "admin") return true;
+    return data.currentUser.role === "guest" && Boolean(item.guestAllowed);
+  });
+
+  async function resetGuestDemo() {
+    localStorage.removeItem("warehouse-guest-demo-v1");
+    await refresh();
+    setPage("home");
+    showToast("演示数据已恢复到初始状态。");
+  }
 
   return (
     <main className="app-shell">
       <aside className={navOpen ? "open" : ""}>
         <div className="brand"><span className="brand-box">仓</span><div><strong>仓储台</strong><small>库存管理系统</small></div></div>
         <nav>{visibleNav.map((item) => <button key={item.page} className={page === item.page ? "active" : ""} onClick={() => navigate(item.page)}><span>{item.glyph}</span>{item.label}{item.page === "inventory" && data.products.filter((product) => product.current_stock <= product.min_stock).length > 0 && <em>{data.products.filter((product) => product.current_stock <= product.min_stock).length}</em>}</button>)}</nav>
-        <div className="sidebar-footer"><div className="user-mini"><span>{data.currentUser.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{data.currentUser.display_name}</strong><small>{data.currentUser.role === "admin" ? "管理员" : "查看者"}</small></div></div><div className="system-state"><i />数据已连接</div></div>
+        <div className="sidebar-footer"><div className="user-mini"><span>{data.currentUser.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{data.currentUser.display_name}</strong><small>{data.currentUser.role === "admin" ? "管理员" : data.currentUser.role === "guest" ? "访客试用" : "查看者"}</small></div></div><div className={`system-state ${data.guest ? "demo" : ""}`}><i />{data.guest ? "演示数据 · 仅本机" : "真实数据已连接"}</div></div>
       </aside>
       {navOpen && <button className="mobile-overlay" aria-label="关闭菜单" onClick={() => setNavOpen(false)} />}
       <section className="main-area">
-        <header className="top-header"><button className="menu-button" onClick={() => setNavOpen(true)}>☰</button><div><small>仓库管理 /</small><strong>{pageTitle(page)}</strong></div><div className="header-actions"><span className="role-pill">{data.currentUser.role === "admin" ? "全部权限" : "金额已隐藏"}</span><button className="header-alert" onClick={() => navigate("inventory")}><span>!</span>{data.products.filter((product) => product.current_stock <= product.min_stock).length > 0 && <em>{data.products.filter((product) => product.current_stock <= product.min_stock).length}</em>}</button></div></header>
+        <header className="top-header"><button className="menu-button" onClick={() => setNavOpen(true)}>☰</button><div><small>{data.guest ? "访客试用 /" : "仓库管理 /"}</small><strong>{pageTitle(page)}</strong></div><div className="header-actions"><span className={`role-pill ${data.guest ? "guest" : ""}`}>{data.currentUser.role === "admin" ? "全部权限" : data.guest ? "无需登录 · 演示沙箱" : "金额已隐藏"}</span><button className="header-alert" onClick={() => navigate("inventory")}><span>!</span>{data.products.filter((product) => product.current_stock <= product.min_stock).length > 0 && <em>{data.products.filter((product) => product.current_stock <= product.min_stock).length}</em>}</button></div></header>
         <div className="content-area">
+          {data.guest && <section className="guest-banner"><span>试玩</span><div><strong>{data.pendingApproval ? "账号正在等待管理员审批，当前进入访客试用" : "你正在使用访客演示数据"}</strong><p>所有操作仅保存在这个浏览器中，不会读取或修改真实仓库。</p></div><button onClick={() => void resetGuestDemo()}>重置演示数据</button></section>}
           {page === "home" && <Dashboard data={data} onNavigate={navigate} />}
-          {page === "inbound" && <DocumentForm key={`in-${editing?.id ?? "new"}`} type="inbound" data={data} editing={editing} onCancelEdit={() => { setEditing(null); navigate("records"); }} onSaved={async (message) => { setEditing(null); await refresh(message); navigate("records"); }} />}
-          {page === "outbound" && <DocumentForm key={`out-${editing?.id ?? "new"}`} type="outbound" data={data} editing={editing} onCancelEdit={() => { setEditing(null); navigate("records"); }} onSaved={async (message) => { setEditing(null); await refresh(message); navigate("records"); }} />}
+          {page === "inbound" && <DocumentForm key={`in-${editing?.id ?? "new"}`} type="inbound" data={data} editing={editing} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); navigate("records"); }} onSaved={completeAction} />}
+          {page === "outbound" && <DocumentForm key={`out-${editing?.id ?? "new"}`} type="outbound" data={data} editing={editing} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); navigate("records"); }} onSaved={completeAction} />}
           {page === "inventory" && <InventoryView data={data} />}
-          {page === "stocktake" && <StocktakeView data={data} onSaved={refresh} />}
+          {page === "stocktake" && <StocktakeView data={data} onSaved={async (message) => { if (data.guest) showToast(message); else await refresh(message); }} onGuestStocktake={simulateGuestStocktake} />}
           {page === "reports" && <ReportsView data={data} />}
           {page === "records" && <RecordsView data={data} onRefresh={refresh} onEdit={(document) => { setEditing(document); navigate(document.type === "inbound" ? "inbound" : "outbound"); }} />}
           {page === "products" && <ProductsView data={data} onRefresh={refresh} />}

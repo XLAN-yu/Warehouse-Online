@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 
 export const dynamic = "force-dynamic";
 
-type Role = "admin" | "viewer";
+type Role = "admin" | "viewer" | "pending";
 type DocumentType = "inbound" | "outbound" | "stocktake";
 
 type CurrentUser = {
@@ -82,6 +82,66 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function hasAuthenticatedIdentity(request: Request) {
+  return Boolean(
+    request.headers.get("oai-authenticated-user-id") &&
+      request.headers.get("oai-authenticated-user-email"),
+  );
+}
+
+function guestDemoData(pendingApproval = false) {
+  const today = new Date();
+  const at = (daysAgo: number, hour: number, minute: number) => {
+    const value = new Date(today);
+    value.setDate(value.getDate() - daysAgo);
+    value.setHours(hour, minute, 0, 0);
+    return value.toISOString();
+  };
+  const suppliers = [
+    { id: "demo-s1", name: "华东工业用品", created_at: at(120, 9, 0) },
+    { id: "demo-s2", name: "安捷办公物资", created_at: at(90, 9, 0) },
+    { id: "demo-s3", name: "恒源劳保供应", created_at: at(60, 9, 0) },
+  ];
+  const products = [
+    { id: "demo-p1", code: "SKU-000001", name: "丁腈防护手套", unit: "盒", status: "normal", min_stock: 30, current_stock: 128, average_cost_cents: 1880, default_supplier_id: "demo-s3", default_supplier_name: "恒源劳保供应", archived_at: null, created_at: at(45, 9, 0), updated_at: at(0, 9, 10) },
+    { id: "demo-p2", code: "SKU-000002", name: "透明封箱胶带", unit: "卷", status: "ordered", min_stock: 40, current_stock: 86, average_cost_cents: 425, default_supplier_id: "demo-s1", default_supplier_name: "华东工业用品", archived_at: null, created_at: at(44, 9, 0), updated_at: at(0, 9, 10) },
+    { id: "demo-p3", code: "SKU-000003", name: "A4复印纸", unit: "箱", status: "ordered", min_stock: 15, current_stock: 12, average_cost_cents: 12800, default_supplier_id: "demo-s2", default_supplier_name: "安捷办公物资", archived_at: null, created_at: at(43, 9, 0), updated_at: at(1, 15, 20) },
+    { id: "demo-p4", code: "SKU-000004", name: "碱性电池 AA", unit: "板", status: "price_changed", min_stock: 20, current_stock: 32, average_cost_cents: 1680, default_supplier_id: "demo-s1", default_supplier_name: "华东工业用品", archived_at: null, created_at: at(42, 9, 0), updated_at: at(2, 11, 40) },
+    { id: "demo-p5", code: "SKU-000005", name: "免洗消毒凝胶", unit: "瓶", status: "alternate", min_stock: 18, current_stock: 18, average_cost_cents: 1290, default_supplier_id: "demo-s3", default_supplier_name: "恒源劳保供应", archived_at: null, created_at: at(41, 9, 0), updated_at: at(0, 10, 35) },
+    { id: "demo-p6", code: "SKU-000006", name: "黑色打印机硒鼓", unit: "支", status: "ordered", min_stock: 8, current_stock: 4, average_cost_cents: 16800, default_supplier_id: "demo-s2", default_supplier_name: "安捷办公物资", archived_at: null, created_at: at(40, 9, 0), updated_at: at(3, 14, 0) },
+  ];
+  const item = (
+    id: string,
+    documentId: string,
+    productId: string,
+    quantity: number,
+    before: number,
+    after: number,
+    unitPrice: number,
+    unitCost: number,
+  ) => {
+    const product = products.find((entry) => entry.id === productId)!;
+    return { id, document_id: documentId, product_id: productId, product_code: product.code, product_name: product.name, product_unit: product.unit, quantity, counted_quantity: null, unit_price_cents: unitPrice, unit_cost_cents: unitCost, before_quantity: before, after_quantity: after };
+  };
+  const documents = [
+    { id: "demo-d1", document_no: "RK-DEMO-0003", type: "inbound", purpose: "常规补货", supplier_id: "demo-s3", supplier_name: "恒源劳保供应", external_ref: "SH-260805-18", status: "active", revision_of: null, operator_user_id: "demo-admin", operator_name: "演示管理员", effective_at: at(0, 9, 10), created_at: at(0, 9, 10), updated_at: at(0, 9, 10), items: [item("demo-i1", "demo-d1", "demo-p1", 40, 88, 128, 1900, 1900), item("demo-i2", "demo-d1", "demo-p5", 12, 6, 18, 1290, 1290)] },
+    { id: "demo-d2", document_no: "CK-DEMO-0008", type: "outbound", purpose: "生产车间领用", supplier_id: null, supplier_name: null, external_ref: "", status: "active", revision_of: null, operator_user_id: "demo-admin", operator_name: "演示管理员", effective_at: at(0, 10, 35), created_at: at(0, 10, 35), updated_at: at(0, 10, 35), items: [item("demo-i3", "demo-d2", "demo-p2", 14, 100, 86, 0, 425), item("demo-i4", "demo-d2", "demo-p4", 8, 40, 32, 0, 1680)] },
+    { id: "demo-d3", document_no: "PD-DEMO-0002", type: "stocktake", purpose: "周度抽盘", supplier_id: null, supplier_name: null, external_ref: "", status: "active", revision_of: null, operator_user_id: "demo-admin", operator_name: "演示管理员", effective_at: at(1, 15, 20), created_at: at(1, 15, 20), updated_at: at(1, 15, 20), items: [{ ...item("demo-i5", "demo-d3", "demo-p3", -1, 13, 12, 0, 12800), counted_quantity: 12 }] },
+    { id: "demo-d4", document_no: "CK-DEMO-0007", type: "outbound", purpose: "行政办公领用", supplier_id: null, supplier_name: null, external_ref: "", status: "active", revision_of: null, operator_user_id: "demo-admin", operator_name: "演示管理员", effective_at: at(2, 11, 40), created_at: at(2, 11, 40), updated_at: at(2, 11, 40), items: [item("demo-i6", "demo-d4", "demo-p3", 3, 16, 13, 0, 12800)] },
+  ];
+  return {
+    guest: true,
+    pendingApproval,
+    currentUser: { id: "guest", email: "", display_name: pendingApproval ? "待审批用户" : "访客", role: "guest" },
+    products,
+    suppliers,
+    documents,
+    users: [],
+    auditLogs: [],
+    backupPolicy: { intervalDays: 7, retentionDays: 30, location: "local-folder" },
+  };
+}
+
 function cleanText(value: unknown, max = 120) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
@@ -115,8 +175,9 @@ function decodeDisplayName(request: Request, fallback: string) {
 
 async function ensureCurrentUser(request: Request): Promise<CurrentUser> {
   const db = getDatabase();
-  const userId = request.headers.get("oai-authenticated-user-id") || "local-admin";
-  const email = request.headers.get("oai-authenticated-user-email") || "admin@local.test";
+  const userId = request.headers.get("oai-authenticated-user-id");
+  const email = request.headers.get("oai-authenticated-user-email");
+  if (!userId || !email) throw new Error("需要登录后才能访问真实仓库。");
   const fallbackName = email.split("@")[0] || "仓库用户";
   const displayName = decodeDisplayName(request, fallbackName);
   const existing = await db
@@ -126,7 +187,7 @@ async function ensureCurrentUser(request: Request): Promise<CurrentUser> {
 
   if (!existing) {
     const count = await db.prepare("SELECT COUNT(*) AS total FROM users").first<{ total: number }>();
-    const role: Role = userId === "local-admin" || Number(count?.total ?? 0) === 0 ? "admin" : "viewer";
+    const role: Role = Number(count?.total ?? 0) === 0 ? "admin" : "pending";
     await db
       .prepare(
         "INSERT OR IGNORE INTO users (id, email, display_name, role, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -149,7 +210,7 @@ async function ensureCurrentUser(request: Request): Promise<CurrentUser> {
 }
 
 function requireAdmin(user: CurrentUser) {
-  if (user.role !== "admin") throw new Error("当前账号是查看者，不能执行此操作。");
+  if (user.role !== "admin") throw new Error("当前账号没有管理员权限，不能执行此操作。");
 }
 
 async function resolveSupplier(name: string) {
@@ -874,7 +935,9 @@ async function restoreBackup(user: CurrentUser, payload: Record<string, unknown>
 
 export async function GET(request: Request) {
   try {
+    if (!hasAuthenticatedIdentity(request)) return Response.json(guestDemoData());
     const user = await ensureCurrentUser(request);
+    if (user.role === "pending") return Response.json(guestDemoData(true));
     const url = new URL(request.url);
     if (url.searchParams.get("view") === "backup") {
       return Response.json(await createBackup(user));
@@ -888,6 +951,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    if (!hasAuthenticatedIdentity(request)) {
+      return jsonError("访客试用数据只保存在当前浏览器，不能写入真实仓库。", 403);
+    }
     const user = await ensureCurrentUser(request);
     const payload = (await request.json()) as Record<string, unknown>;
     const action = cleanText(payload.action, 40);
@@ -904,7 +970,7 @@ export async function POST(request: Request) {
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "提交失败。";
-    const status = message.includes("查看者") ? 403 : 400;
+    const status = message.includes("权限") || message.includes("登录") ? 403 : 400;
     return jsonError(message, status);
   }
 }

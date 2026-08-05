@@ -52,6 +52,8 @@ aside nav button em { min-width: 20px; margin-left: auto; padding: 2px 6px; bord
 .user-mini small { color: #829c94; font-size: 10px; }
 .system-state { margin: 7px 8px 0; color: #6f8c83; font-size: 10px; }
 .system-state i { width: 6px; height: 6px; display: inline-block; margin-right: 6px; border-radius: 50%; background: #64cbb0; box-shadow: 0 0 9px #64cbb0; }
+.system-state.demo { color: #b6a065; }
+.system-state.demo i { background: #e1b94c; box-shadow: 0 0 9px #e1b94c; }
 
 .main-area { min-width: 0; }
 .top-header { height: 66px; display: flex; align-items: center; gap: 12px; padding: 0 clamp(18px, 3vw, 38px); border-bottom: 1px solid #dde5e0; background: rgba(255,255,255,.86); backdrop-filter: blur(12px); }
@@ -60,10 +62,17 @@ aside nav button em { min-width: 20px; margin-left: auto; padding: 2px 6px; bord
 .top-header strong { font-size: 13px; }
 .header-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .role-pill { padding: 6px 10px; border: 1px solid #dfe8e3; border-radius: 999px; color: #6c7d77; background: #f8faf9; font-size: 10px; }
+.role-pill.guest { border-color: #e6d59e; color: #735c18; background: #fff8df; }
 .header-alert { position: relative; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #e1e7e4; border-radius: 50%; color: #7a8884; background: #fff; font-family: Georgia, serif; font-weight: 800; }
 .header-alert em { position: absolute; top: -4px; right: -4px; min-width: 17px; padding: 2px 4px; border: 2px solid white; border-radius: 999px; color: white; background: #d35d53; font: 8px Arial; }
 .menu-button { display: none; border: 0; color: #34564d; background: transparent; font-size: 20px; }
 .content-area { max-width: 1500px; margin: 0 auto; padding: clamp(22px, 3vw, 38px); }
+.guest-banner { min-height: 58px; display: flex; align-items: center; gap: 12px; margin-bottom: 18px; padding: 10px 13px; border: 1px solid #e6d69f; border-radius: 11px; color: #4d461f; background: linear-gradient(90deg, #fff9e5, #fffdf6); box-shadow: 0 7px 24px rgba(93, 76, 20, .05); }
+.guest-banner > span { min-width: 43px; padding: 6px 8px; border-radius: 7px; color: #fff9e8; background: #8b742d; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-align: center; }
+.guest-banner div { min-width: 0; display: grid; gap: 3px; }
+.guest-banner strong { font-size: 10px; }
+.guest-banner p { margin: 0; color: #8a8057; font-size: 8px; }
+.guest-banner button { margin-left: auto; padding: 7px 10px; border: 1px solid #ded09e; border-radius: 7px; color: #6f5d22; background: rgba(255,255,255,.7); font-size: 8px; white-space: nowrap; }
 .page-stack { display: grid; gap: 20px; animation: enter .32s ease both; }
 @keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -299,4 +308,6 @@ aside nav button em { min-width: 20px; margin-left: auto; padding: 2px 6px; bord
   .backup-card { grid-template-columns: 40px 1fr; padding: 17px; }.backup-card button { grid-column: 1 / -1; width: 100%; }
   .modal-card { padding: 18px; }.modal-form-grid, .code-mode { grid-template-columns: 1fr; }.modal-form-grid .wide { grid-column: auto; }
   .toast { right: 13px; bottom: 13px; left: 13px; }
+  .guest-banner { align-items: flex-start; flex-wrap: wrap; }
+  .guest-banner button { width: 100%; margin-left: 0; }
 }

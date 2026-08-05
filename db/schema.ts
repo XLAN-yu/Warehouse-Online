@@ -15,7 +15,7 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
-    role: text("role", { enum: ["admin", "viewer"] }).notNull().default("viewer"),
+    role: text("role", { enum: ["admin", "viewer", "pending"] }).notNull().default("viewer"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
