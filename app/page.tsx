@@ -1,5 +1,5 @@
-import { SignalWorkbench } from "./SignalWorkbench";
+import { WarehouseApp } from "./WarehouseApp";
 
 export default function Home() {
-  return <SignalWorkbench />;
+  return <WarehouseApp />;
 }
