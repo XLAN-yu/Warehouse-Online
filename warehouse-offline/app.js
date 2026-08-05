@@ -9,6 +9,7 @@
   var draftRef = "";
   var draftPurpose = "";
   var toastTimer = null;
+  var toastRemoveTimer = null;
   var dataReady = false;
   var saveQueue = Promise.resolve();
   var pendingProductLine = null;
@@ -285,12 +286,14 @@
   function toast(message) {
     var old = document.querySelector(".success");
     if (old) old.remove();
+    clearTimeout(toastTimer);
+    clearTimeout(toastRemoveTimer);
     var node = document.createElement("div");
     node.className = "success";
     node.textContent = "✓ " + message;
     document.body.appendChild(node);
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { node.remove(); }, 3500);
+    toastTimer = setTimeout(function () { node.classList.add("hide"); }, 3000);
+    toastRemoveTimer = setTimeout(function () { node.remove(); }, 3600);
   }
 
   function errorAt(id, message) {
@@ -529,7 +532,11 @@
       pendingProductLine = null;
       save();
       render();
-      toast(returningToInbound ? "商品已建立并带回入库明细，请继续确认入库。" : "商品已建立：" + name + "（" + code + "）");
+      if (returningToInbound) {
+        setTimeout(function () { window.Warehouse.submitDocument(); }, 0);
+      } else {
+        toast("商品已建立：" + name + "（" + code + "）");
+      }
     },
     exportBackup: function () {
       fetch("/api/backup", {
