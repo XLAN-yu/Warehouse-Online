@@ -1,58 +1,62 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "warehouse-offline-data-v1";
   var page = "home";
   var period = "day";
   var documentType = "inbound";
   var draftLines = [{ product: "", quantity: "", price: "" }];
   var toastTimer = null;
+  var dataReady = false;
+  var saveQueue = Promise.resolve();
 
   function uid(prefix) {
     return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   }
 
   function now() { return new Date().toISOString(); }
-  function ago(days, hour, minute) {
-    var value = new Date();
-    value.setDate(value.getDate() - days);
-    value.setHours(hour, minute, 0, 0);
-    return value.toISOString();
-  }
 
   function initialData() {
     return {
       version: 1,
-      products: [
-        { id: "p1", code: "SKU-000001", name: "丁腈防护手套", unit: "盒", status: "正常供货", min: 30, stock: 128, avg: 1880, supplier: "恒源劳保供应" },
-        { id: "p2", code: "SKU-000002", name: "透明封箱胶带", unit: "卷", status: "补货已下单", min: 40, stock: 86, avg: 425, supplier: "华东工业用品" },
-        { id: "p3", code: "SKU-000003", name: "A4复印纸", unit: "箱", status: "补货已下单", min: 15, stock: 12, avg: 12800, supplier: "安捷办公物资" },
-        { id: "p4", code: "SKU-000004", name: "碱性电池 AA", unit: "板", status: "价格有变动", min: 20, stock: 32, avg: 1680, supplier: "华东工业用品" },
-        { id: "p5", code: "SKU-000005", name: "免洗消毒凝胶", unit: "瓶", status: "启用替代供货", min: 18, stock: 18, avg: 1290, supplier: "恒源劳保供应" },
-        { id: "p6", code: "SKU-000006", name: "黑色打印机硒鼓", unit: "支", status: "补货已下单", min: 8, stock: 4, avg: 16800, supplier: "安捷办公物资" }
-      ],
-      documents: [
-        { id: "d1", no: "RK-DEMO-0003", type: "inbound", purpose: "常规补货", supplier: "恒源劳保供应", ref: "SH-260805-18", at: ago(0, 9, 10), operator: "离线管理员", items: [{ productId: "p1", quantity: 40, price: 1900, cost: 1900, before: 88, after: 128 }, { productId: "p5", quantity: 12, price: 1290, cost: 1290, before: 6, after: 18 }] },
-        { id: "d2", no: "CK-DEMO-0008", type: "outbound", purpose: "生产车间领用", supplier: "", ref: "", at: ago(0, 10, 35), operator: "离线管理员", items: [{ productId: "p2", quantity: 14, price: 0, cost: 425, before: 100, after: 86 }, { productId: "p4", quantity: 8, price: 0, cost: 1680, before: 40, after: 32 }] },
-        { id: "d3", no: "PD-DEMO-0002", type: "stocktake", purpose: "周度抽盘", supplier: "", ref: "", at: ago(1, 15, 20), operator: "离线管理员", items: [{ productId: "p3", quantity: -1, counted: 12, price: 0, cost: 12800, before: 13, after: 12 }] }
-      ]
+      products: [],
+      documents: []
     };
   }
 
   function load() {
-    try {
-      var parsed = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      if (parsed && Array.isArray(parsed.products) && Array.isArray(parsed.documents)) return parsed;
-    } catch (error) {}
-    var fresh = initialData();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-    return fresh;
+    fetch("/api/data", { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) throw new Error("数据文件读取失败（" + response.status + "）");
+        return response.json();
+      })
+      .then(function (parsed) {
+        if (!parsed || !Array.isArray(parsed.products) || !Array.isArray(parsed.documents)) throw new Error("数据文件格式不正确");
+        state = parsed;
+        dataReady = true;
+        render();
+      })
+      .catch(function (error) {
+        var root = document.getElementById("app");
+        root.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;background:#f3f6f2;padding:24px"><section style="max-width:620px;background:white;border:1px solid #dce5df;border-radius:24px;padding:36px;box-shadow:0 18px 50px rgba(28,54,43,.1)"><p style="color:#23845c;font-weight:700">启动方式不正确</p><h1 style="margin:8px 0 14px">请双击“启动仓储台.cmd”</h1><p style="line-height:1.8;color:#56645e">离线版需要由随包程序打开，才能把所有操作保存到 <b>data\\warehouse-data.json</b>。请关闭本页，回到解压后的文件夹并双击启动文件。</p><small style="color:#89948f">' + esc(error.message) + '</small></section></main>';
+      });
   }
 
-  var state = load();
+  var state = initialData();
 
   function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (!dataReady) return;
+    var snapshot = JSON.stringify(state);
+    saveQueue = saveQueue.then(function () {
+      return fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: snapshot
+      }).then(function (response) {
+        if (!response.ok) throw new Error("保存失败（" + response.status + "）");
+      });
+    }).catch(function (error) {
+      toast("数据文件保存失败：" + error.message);
+    });
   }
 
   function esc(value) {
@@ -100,12 +104,12 @@
             navButton("products", "商品资料", "◇") +
             navButton("backup", "数据备份", "↻") +
           '</nav>' +
-          '<div class="side-foot"><i></i>离线模式 · 数据仅存本机</div>' +
+          '<div class="side-foot"><i></i>离线模式 · 数据保存到工程包</div>' +
         '</aside>' +
         '<section class="main">' +
           '<header class="top"><div><small>离线仓库 /</small><strong>' + pageTitle() + '</strong></div><span class="offline-pill">无需登录 · 无网络依赖</span></header>' +
           '<div class="content">' +
-            '<section class="offline-banner"><span>离线</span><div><strong>当前数据只保存在这个浏览器中</strong><p>请定期下载 JSON 备份；清除浏览器数据会删除库存记录。</p></div><button onclick="Warehouse.exportBackup()">立即备份</button></section>' +
+            '<section class="offline-banner"><span>离线</span><div><strong>业务数据自动写入 data 文件夹</strong><p>主数据位于 data\\warehouse-data.json，每周自动备份并保留最近 30 天。</p></div><button onclick="Warehouse.exportBackup()">立即备份</button></section>' +
             pageView() +
           '</div>' +
         '</section>' +
@@ -200,7 +204,7 @@
   }
 
   function backupView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">本机数据安全</p><h1>数据备份</h1><p>建议每周下载完整备份，并保存到独立文件夹。</p></div></section><section class="backup-grid"><article class="backup-card"><h2>下载 JSON 备份</h2><p>包含商品、库存、全部单据和成本信息，可用于完整恢复。</p><button class="primary" onclick="Warehouse.exportBackup()">下载备份</button></article><article class="backup-card"><h2>从备份恢复</h2><p>选择仓储台 JSON 备份文件，用备份内容替换当前本机数据。</p><button class="secondary" onclick="document.getElementById(\'restoreFile\').click()">选择文件</button><input hidden id="restoreFile" type="file" accept=".json,application/json" onchange="Warehouse.restoreBackup(this.files[0])"></article><article class="backup-card"><h2>全量 Excel 导出</h2><p>生成库存与流水两个工作表，可直接使用 Microsoft Excel 打开。</p><button class="export" onclick="Warehouse.exportExcel()">导出 Excel</button></article><article class="backup-card"><h2>恢复演示初始数据</h2><p>清除当前本机库存并重新载入演示商品。操作前请先下载备份。</p><button class="secondary" onclick="Warehouse.reset()">恢复初始数据</button></article></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">本机数据安全</p><h1>数据备份</h1><p>系统每周自动备份一次，并删除超过 30 天的旧备份。</p></div></section><section class="backup-grid"><article class="backup-card"><h2>立即备份到文件夹</h2><p>完整备份将写入 data\\backups，可直接复制到其他磁盘保存。</p><button class="primary" onclick="Warehouse.exportBackup()">立即备份</button></article><article class="backup-card"><h2>从备份恢复</h2><p>选择 data\\backups 中的仓储台 JSON 备份，用其替换当前数据。</p><button class="secondary" onclick="document.getElementById(\'restoreFile\').click()">选择文件</button><input hidden id="restoreFile" type="file" accept=".json,application/json" onchange="Warehouse.restoreBackup(this.files[0])"></article><article class="backup-card"><h2>全量 Excel 导出</h2><p>生成库存与流水两个工作表，可直接使用 Microsoft Excel 打开。</p><button class="export" onclick="Warehouse.exportExcel()">导出 Excel</button></article><article class="backup-card"><h2>清空全部数据</h2><p>清除商品、库存和全部流水，恢复为空白系统。操作前请先备份。</p><button class="secondary" onclick="Warehouse.reset()">清空数据</button></article></section></div>';
   }
 
   function sumQty(docs, type) {
@@ -364,12 +368,22 @@
       toast("商品已建立：" + name + "（" + code + "）");
     },
     exportBackup: function () {
-      download("仓储台离线备份-" + new Date().toISOString().slice(0, 10) + ".json", JSON.stringify({ format: "warehouse-offline-backup", version: 1, createdAt: now(), data: state }, null, 2), "application/json");
-      toast("完整备份已下载。");
+      fetch("/api/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state)
+      }).then(function (response) {
+        if (!response.ok) throw new Error("备份失败（" + response.status + "）");
+        return response.json();
+      }).then(function (result) {
+        toast("备份已保存：data\\backups\\" + result.file);
+      }).catch(function (error) {
+        alert("无法备份：" + error.message);
+      });
     },
     restoreBackup: function (file) {
       if (!file) return;
-      if (!confirm("恢复备份会替换当前浏览器中的全部库存和流水，确认继续吗？")) return;
+      if (!confirm("恢复备份会替换 data 文件夹中的全部库存和流水，确认继续吗？")) return;
       var reader = new FileReader();
       reader.onload = function () {
         try {
@@ -394,14 +408,14 @@
       toast("Excel 已导出。");
     },
     reset: function () {
-      if (!confirm("确认恢复演示初始数据？当前本机数据将被替换。")) return;
+      if (!confirm("确认清空全部商品、库存和流水？此操作不可撤销，建议先立即备份。")) return;
       state = initialData();
       save();
       page = "home";
       render();
-      toast("已恢复演示初始数据。");
+      toast("全部数据已清空，系统已恢复为空白状态。");
     }
   };
 
-  render();
+  load();
 })();
