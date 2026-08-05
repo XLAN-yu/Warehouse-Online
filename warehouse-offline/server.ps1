@@ -1,4 +1,4 @@
-param([switch]$NoBrowser)
+param([switch]$NoBrowser, [int]$Port = 0)
 
 $ErrorActionPreference = "Stop"
 
@@ -17,7 +17,7 @@ function Write-Utf8File {
 }
 
 function Get-EmptyStateJson {
-  return '{"version":1,"products":[],"documents":[]}'
+  return '{"version":1,"products":[],"documents":[],"settings":{"fontScale":1}}'
 }
 
 function Test-StateJson {
@@ -108,7 +108,8 @@ if (-not (Test-Path -LiteralPath $stateFile)) {
 
 $listener = $null
 $selectedPort = $null
-foreach ($candidatePort in 8765..8775) {
+$candidatePorts = if ($Port -gt 0) { @($Port) } else { @(8765..8775) }
+foreach ($candidatePort in $candidatePorts) {
   $candidate = New-Object System.Net.HttpListener
   $candidate.Prefixes.Add("http://127.0.0.1:$candidatePort/")
   try {
@@ -122,7 +123,7 @@ foreach ($candidatePort in 8765..8775) {
 }
 
 if ($null -eq $listener) {
-  throw "Cannot start the local warehouse service. Ports 8765-8775 are unavailable."
+  throw "Cannot start the local warehouse service. The requested local port is unavailable."
 }
 
 $address = "http://127.0.0.1:$selectedPort/"

@@ -5,9 +5,13 @@
   var period = "day";
   var documentType = "inbound";
   var draftLines = [{ product: "", quantity: "", price: "" }];
+  var draftSupplier = "";
+  var draftRef = "";
+  var draftPurpose = "";
   var toastTimer = null;
   var dataReady = false;
   var saveQueue = Promise.resolve();
+  var pendingProductLine = null;
 
   function uid(prefix) {
     return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
@@ -19,8 +23,19 @@
     return {
       version: 1,
       products: [],
-      documents: []
+      documents: [],
+      settings: { fontScale: 1 }
     };
+  }
+
+  function normalizeState(value) {
+    if (!value.settings) value.settings = { fontScale: 1 };
+    if ([1, 1.1, 1.2].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
+    return value;
+  }
+
+  function applyFontScale() {
+    document.body.style.zoom = String(state.settings && state.settings.fontScale ? state.settings.fontScale : 1);
   }
 
   function load() {
@@ -31,8 +46,9 @@
       })
       .then(function (parsed) {
         if (!parsed || !Array.isArray(parsed.products) || !Array.isArray(parsed.documents)) throw new Error("数据文件格式不正确");
-        state = parsed;
+        state = normalizeState(parsed);
         dataReady = true;
+        applyFontScale();
         render();
       })
       .catch(function (error) {
@@ -65,6 +81,27 @@
     });
   }
 
+  function flashFields(fields) {
+    var targets = fields.filter(function (field) { return !!field; });
+    targets.forEach(function (field) {
+      field.classList.remove("field-alert");
+      void field.offsetWidth;
+      field.classList.add("field-alert");
+    });
+    if (targets[0]) targets[0].focus();
+    setTimeout(function () {
+      targets.forEach(function (field) { field.classList.remove("field-alert"); });
+    }, 1500);
+  }
+
+  function productPrefill(text) {
+    var value = String(text || "").trim();
+    var parts = value.split(" · ");
+    if (parts.length > 1) return { code: parts.shift().trim(), name: parts.join(" · ").trim() };
+    if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && /\d/.test(value)) return { code: value, name: "" };
+    return { code: "", name: value };
+  }
+
   function money(cents) {
     return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", minimumFractionDigits: 2 }).format((cents || 0) / 100);
   }
@@ -87,7 +124,7 @@
     return matches.length === 1 ? matches[0] : undefined;
   }
   function pageTitle() {
-    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", backup: "数据备份" }[page] || "工作台";
+    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "显示设置", backup: "数据备份" }[page] || "工作台";
   }
 
   function navButton(id, label, glyph) {
@@ -102,12 +139,13 @@
           '<div class="brand"><span class="brand-mark">仓</span><div><strong>仓储台</strong><small>离线库存管理</small></div></div>' +
           '<nav class="nav">' +
             navButton("home", "工作台", "⌂") +
+            navButton("products", "商品资料", "◇") +
             navButton("inbound", "入库登记", "↘") +
             navButton("outbound", "出库登记", "↗") +
             navButton("inventory", "查看库存", "▦") +
             navButton("stocktake", "库存盘点", "✓") +
             navButton("reports", "库存报表", "▤") +
-            navButton("products", "商品资料", "◇") +
+            navButton("settings", "显示设置", "Aa") +
             navButton("backup", "数据备份", "↻") +
           '</nav>' +
           '<div class="side-foot"><i></i>离线模式 · 数据保存到工程包</div>' +
@@ -119,7 +157,7 @@
             pageView() +
           '</div>' +
         '</section>' +
-      '</main>';
+      '</main><div id="modalHost"></div>';
   }
 
   function pageView() {
@@ -129,6 +167,7 @@
     if (page === "stocktake") return stocktakeView();
     if (page === "reports") return reportsView();
     if (page === "products") return productsView();
+    if (page === "settings") return settingsView();
     if (page === "backup") return backupView();
     return homeView();
   }
@@ -141,8 +180,8 @@
     var low = state.products.filter(function (p) { return p.stock <= p.min; });
     var value = state.products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
     return '<div class="stack">' +
-      '<section class="hero"><div><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。</p></div><div class="hero-badge"><b>' + new Date().getDate() + '</b><small>' + esc(new Intl.DateTimeFormat("zh-CN", { month: "long", weekday: "short" }).format(new Date())) + '</small></div></section>' +
-      '<section class="quick"><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button><button onclick="Warehouse.go(\'stocktake\')"><span class="qicon qstock">✓</span><div><strong>库存盘点</strong><small>自动生成盘盈盘亏</small></div><em>→</em></button></section>' +
+      '<button class="hero" onclick="Warehouse.showGuide()"><div><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></div><div class="hero-badge"><b>' + new Date().getDate() + '</b><small>' + esc(new Intl.DateTimeFormat("zh-CN", { month: "long", weekday: "short" }).format(new Date())) + '</small></div></button>' +
+      '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
       '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + state.products.length + '<small> 种</small></strong><p>' + fmt(state.products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
     '</div>';
@@ -179,6 +218,15 @@
     });
   }
 
+  function collectDraftMeta() {
+    var supplier = document.getElementById("docSupplier");
+    var ref = document.getElementById("docRef");
+    var purpose = document.getElementById("docPurpose");
+    if (supplier) draftSupplier = supplier.value;
+    if (ref) draftRef = ref.value;
+    if (purpose) draftPurpose = purpose.value;
+  }
+
   function productOptions() {
     return state.products.map(function (p) { return '<option value="' + esc(p.code + " · " + p.name) + '"></option>'; }).join("");
   }
@@ -186,7 +234,7 @@
   function documentView() {
     documentType = page;
     var inbound = documentType === "inbound";
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">' + (inbound ? "采购到货 · 库存增加" : "领用发货 · 库存减少") + '</p><h1>新建' + (inbound ? "入库" : "出库") + '单</h1><p>' + (inbound ? "一次可登记多种商品，实际单价参与移动加权平均。" : "任何情况下都不允许负库存，成本由系统自动计算。") + '</p></div></section><section class="panel form"><div class="form-section"><div><h2>单据信息</h2><p>操作人自动记录为离线管理员</p></div><button class="export" onclick="Warehouse.addLine()">＋ 添加一行</button></div><div class="meta ' + (inbound ? "inbound-meta" : "") + '">' + (inbound ? '<label>实际供应商<input id="docSupplier" placeholder="供应商名称"></label>' : '<label>用途<input id="docPurpose" placeholder="例如：生产领用"></label>') + (inbound ? '<label>供应商单号<input id="docRef" placeholder="选填"></label>' : "") + '</div><datalist id="productList">' + productOptions() + '</datalist><div class="lines"><div class="lhead"><span>商品</span><span>当前库存</span><span>数量</span><span>' + (inbound ? "实际单价" : "计价方式") + '</span><span></span></div>' + draftLines.map(function (line, index) { var p = productFromText(line.product); return '<div class="line doc-line" data-index="' + index + '"><input data-field="product" list="productList" value="' + esc(line.product) + '" placeholder="输入品名或编号" onchange="Warehouse.syncLine(this)"><span class="stock">' + (p ? p.stock + esc(p.unit) : "—") + '</span><input data-field="quantity" type="number" min="1" step="1" value="' + esc(line.quantity) + '" placeholder="0">' + (inbound ? '<input data-field="price" type="number" min="0" step="0.01" value="' + esc(line.price) + '" placeholder="¥ 0.00">' : '<span class="cost-method">移动平均价</span>') + '<button onclick="Warehouse.removeLine(' + index + ')">×</button></div>'; }).join("") + '</div><div id="docError"></div><div class="form-foot"><p>共 ' + draftLines.length + ' 行商品明细</p><button class="primary" onclick="Warehouse.submitDocument()">确认' + (inbound ? "入库" : "出库") + '</button></div></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">' + (inbound ? "采购到货 · 库存增加" : "领用发货 · 库存减少") + '</p><h1>新建' + (inbound ? "入库" : "出库") + '单</h1><p>' + (inbound ? "输入库存中没有的商品时，提交后会自动打开新增商品窗口。" : "任何情况下都不允许负库存，成本由系统自动计算。") + '</p></div></section><section class="panel form"><div class="form-section"><div><h2>商品明细</h2><p>带 * 的项目必须填写；按 Enter 自动进入下一项</p></div><button class="export" onclick="Warehouse.addLine()">＋ 添加一行</button></div><datalist id="productList">' + productOptions() + '</datalist><div class="lines"><div class="lhead"><span>商品 *</span><span>当前库存</span><span>数量 *</span><span>' + (inbound ? "实际单价 *" : "计价方式") + '</span><span></span></div>' + draftLines.map(function (line, index) { var p = productFromText(line.product); return '<div class="line doc-line" data-index="' + index + '"><input data-field="product" list="productList" value="' + esc(line.product) + '" placeholder="输入品名或编号" onchange="Warehouse.syncLine(this)" onkeydown="Warehouse.nextOnEnter(event)"><span class="stock">' + (p ? p.stock + esc(p.unit) : "—") + '</span><input data-field="quantity" type="number" min="1" step="1" value="' + esc(line.quantity) + '" placeholder="填写数量" onkeydown="Warehouse.nextOnEnter(event)">' + (inbound ? '<input data-field="price" type="number" min="0" step="0.01" value="' + esc(line.price) + '" placeholder="¥ 0.00" onkeydown="Warehouse.nextOnEnter(event)">' : '<span class="cost-method">移动平均价</span>') + '<button type="button" aria-label="删除这一行" onclick="Warehouse.removeLine(' + index + ')">×</button></div>'; }).join("") + '</div><div class="form-meta-title"><h2>' + (inbound ? "供应商信息" : "出库信息") + '</h2><p>' + (inbound ? "商品明细填写完成后，再填写本次实际供应商。" : "说明本次商品的领用或出库用途。") + '</p></div><div class="meta ' + (inbound ? "inbound-meta" : "outbound-meta") + '">' + (inbound ? '<label><span>实际供应商 *</span><input id="docSupplier" value="' + esc(draftSupplier) + '" placeholder="供应商名称" onkeydown="Warehouse.nextOnEnter(event)"></label><label><span>供应商单号</span><input id="docRef" value="' + esc(draftRef) + '" placeholder="选填" onkeydown="Warehouse.nextOnEnter(event)"></label>' : '<label><span>用途 *</span><input id="docPurpose" value="' + esc(draftPurpose) + '" placeholder="例如：生产领用" onkeydown="Warehouse.nextOnEnter(event)"></label>') + '</div><div id="docError"></div><div class="form-foot"><p>共 ' + draftLines.length + ' 行商品明细 · 操作人自动记录</p><button class="primary" onclick="Warehouse.submitDocument()">确认' + (inbound ? "入库" : "出库") + '</button></div></section></div>';
   }
 
   function stocktakeView() {
@@ -206,7 +254,12 @@
   }
 
   function productsView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>编号可人工填写或由系统自动生成，重复编号会被拦截。</p></div><button class="primary" onclick="Warehouse.productModal()">＋ 新增商品</button></section><section class="panel scroll">' + inventoryTable(state.products) + '</section><div id="modalHost"></div></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>编号可人工填写或由系统自动生成，重复编号会被拦截。</p></div><button class="primary" onclick="Warehouse.productModal()">＋ 新增商品</button></section><section class="panel scroll">' + inventoryTable(state.products) + '</section></div>';
+  }
+
+  function settingsView() {
+    var current = Number(state.settings.fontScale || 1);
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">阅读与显示</p><h1>全局字体大小</h1><p>选择后立即生效，并随 data 文件夹中的仓库数据保存。</p></div></section><section class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.1)"><b>较大</b><span>文字和控件同步增大</span><em>110%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>特大</b><span>适合远距离查看</span><em>120%</em></button></section><section class="panel settings-note"><h2>提示</h2><p>字号增大后，一屏显示的内容会减少；可随时返回这里调整。</p></section></div>';
   }
 
   function backupView() {
@@ -269,9 +322,30 @@
       if (next === "inbound" || next === "outbound") {
         documentType = next;
         draftLines = [{ product: "", quantity: "", price: "" }];
+        draftSupplier = "";
+        draftRef = "";
+        draftPurpose = "";
       }
       render();
       window.scrollTo(0, 0);
+    },
+    showGuide: function () {
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card guide-card"><p class="eyebrow">仓储台使用方法</p><h2>先建商品，再做出入库</h2><div class="guide-steps"><article><b>1</b><div><h3>建立商品资料</h3><p>第一次收到某种商品时，先填写品名、编号、单位、最低库存和默认供应商。</p></div></article><article><b>2</b><div><h3>登记商品入库</h3><p>选择商品，填写数量、实际单价和本次供应商，系统自动增加库存并计算移动平均价。</p></div></article><article><b>3</b><div><h3>登记商品出库</h3><p>选择商品并填写数量和用途；超过现有库存时，系统会直接禁止提交。</p></div></article></div><div class="modal-actions"><button class="primary" onclick="Warehouse.closeModal()">知道了</button></div></div></div>';
+    },
+    setFontScale: function (value) {
+      state.settings.fontScale = Number(value);
+      applyFontScale();
+      save();
+      render();
+      toast("全局显示大小已调整为 " + Math.round(Number(value) * 100) + "%");
+    },
+    nextOnEnter: function (event) {
+      if (event.key !== "Enter") return;
+      var fields = Array.prototype.slice.call(document.querySelectorAll(".form input:not([disabled]), .modal-card input:not([disabled]), .modal-card select:not([disabled])"));
+      var index = fields.indexOf(event.target);
+      if (index >= 0 && fields[index + 1]) {
+        setTimeout(function () { fields[index + 1].focus(); }, 0);
+      }
     },
     filterInventory: function (query) {
       var term = String(query || "").toLowerCase();
@@ -280,11 +354,13 @@
     },
     addLine: function () {
       collectDraftLines();
+      collectDraftMeta();
       draftLines.push({ product: "", quantity: "", price: "" });
       render();
     },
     removeLine: function (index) {
       collectDraftLines();
+      collectDraftMeta();
       if (draftLines.length > 1) draftLines.splice(index, 1);
       render();
     },
@@ -295,17 +371,64 @@
     },
     submitDocument: function () {
       collectDraftLines();
+      collectDraftMeta();
+      var supplierInput = documentType === "inbound" ? document.getElementById("docSupplier") : null;
+      var purposeInput = documentType === "outbound" ? document.getElementById("docPurpose") : null;
+      var rowNodes = Array.prototype.slice.call(document.querySelectorAll(".doc-line"));
+      var missingFields = [];
+      if (supplierInput && !supplierInput.value.trim()) missingFields.push(supplierInput);
+      if (purposeInput && !purposeInput.value.trim()) missingFields.push(purposeInput);
+      rowNodes.forEach(function (row) {
+        var productField = row.querySelector("[data-field=product]");
+        var quantityField = row.querySelector("[data-field=quantity]");
+        var priceField = row.querySelector("[data-field=price]");
+        if (!productField.value.trim()) missingFields.push(productField);
+        if (!quantityField.value.trim()) missingFields.push(quantityField);
+        if (documentType === "inbound" && priceField && !priceField.value.trim()) missingFields.push(priceField);
+      });
+      if (missingFields.length) {
+        flashFields(missingFields);
+        return errorAt("docError", "请填写所有红色闪烁的必填项目。");
+      }
       var parsed = [];
       for (var i = 0; i < draftLines.length; i += 1) {
         var line = draftLines[i];
+        var rowNode = rowNodes[i];
+        var productInput = rowNode ? rowNode.querySelector("[data-field=product]") : null;
+        var quantityInput = rowNode ? rowNode.querySelector("[data-field=quantity]") : null;
+        var priceInput = rowNode ? rowNode.querySelector("[data-field=price]") : null;
         var p = productFromText(line.product);
         var quantity = Number(line.quantity);
         var price = Math.round(Number(line.price || 0) * 100);
-        if (!p) return errorAt("docError", "第 " + (i + 1) + " 行没有找到对应商品，请从联想列表选择，或输入唯一的品名/编号。");
-        if (!Number.isInteger(quantity) || quantity <= 0) return errorAt("docError", "第 " + (i + 1) + " 行数量必须是大于 0 的整数。");
-        if (documentType === "inbound" && (!Number.isFinite(price) || price < 0)) return errorAt("docError", "第 " + (i + 1) + " 行入库单价不正确。");
-        if (documentType === "outbound" && quantity > p.stock) return errorAt("docError", p.name + "库存只有 " + p.stock + p.unit + "，最大可出库 " + p.stock + p.unit + "。");
-        if (parsed.some(function (entry) { return entry.product.id === p.id; })) return errorAt("docError", "同一张单据不能重复添加同一种商品。");
+        if (!String(line.product || "").trim()) {
+          flashFields([productInput]);
+          return errorAt("docError", "请填写第 " + (i + 1) + " 行商品。");
+        }
+        if (!p && documentType === "inbound") {
+          pendingProductLine = i;
+          window.Warehouse.productModal({ source: "inbound", text: line.product, supplier: supplierInput ? supplierInput.value.trim() : "" });
+          return;
+        }
+        if (!p) {
+          flashFields([productInput]);
+          return errorAt("docError", "第 " + (i + 1) + " 行没有找到对应商品，请从联想列表选择。");
+        }
+        if (!String(line.quantity || "").trim() || !Number.isInteger(quantity) || quantity <= 0) {
+          flashFields([quantityInput]);
+          return errorAt("docError", "第 " + (i + 1) + " 行数量必须是大于 0 的整数。");
+        }
+        if (documentType === "inbound" && (!String(line.price || "").trim() || !Number.isFinite(price) || price < 0)) {
+          flashFields([priceInput]);
+          return errorAt("docError", "请填写第 " + (i + 1) + " 行实际单价，可填写 0。");
+        }
+        if (documentType === "outbound" && quantity > p.stock) {
+          flashFields([quantityInput]);
+          return errorAt("docError", p.name + "库存只有 " + p.stock + p.unit + "，最大可出库 " + p.stock + p.unit + "。");
+        }
+        if (parsed.some(function (entry) { return entry.product.id === p.id; })) {
+          flashFields([productInput]);
+          return errorAt("docError", "同一张单据不能重复添加同一种商品。");
+        }
         parsed.push({ product: p, quantity: quantity, price: price });
       }
       var docId = uid("d");
@@ -321,10 +444,13 @@
       });
       var count = state.documents.length + 1;
       var no = (documentType === "inbound" ? "RK" : "CK") + "-OFF-" + String(count).padStart(4, "0");
-      var purpose = documentType === "inbound" ? "采购入库" : (document.getElementById("docPurpose").value.trim() || "离线出库");
-      state.documents.unshift({ id: docId, no: no, type: documentType, purpose: purpose, supplier: documentType === "inbound" ? document.getElementById("docSupplier").value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", at: now(), operator: "离线管理员", items: items });
+      var purpose = documentType === "inbound" ? "采购入库" : purposeInput.value.trim();
+      state.documents.unshift({ id: docId, no: no, type: documentType, purpose: purpose, supplier: supplierInput ? supplierInput.value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", at: now(), operator: "离线管理员", items: items });
       save();
       draftLines = [{ product: "", quantity: "", price: "" }];
+      draftSupplier = "";
+      draftRef = "";
+      draftPurpose = "";
       page = "home";
       render();
       toast((documentType === "inbound" ? "入库" : "出库") + "成功：" + no);
@@ -356,25 +482,54 @@
       toast("盘点完成：" + no);
     },
     setPeriod: function (value) { period = value; render(); },
-    productModal: function () {
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card"><h2>新增商品</h2><div class="modal-grid"><label class="field">商品编号<input id="newCode" placeholder="留空则系统生成"></label><label class="field">商品名称<input id="newName" placeholder="必填"></label><label class="field">单位<input id="newUnit" value="件"></label><label class="field">最低库存<input id="newMin" type="number" min="0" step="1" value="0"></label><label class="field">供应状态<select id="newStatus"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field">默认供应商<input id="newSupplier"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">建立商品</button></div></div></div>';
+    productModal: function (prefill) {
+      prefill = prefill || {};
+      if (prefill.source !== "inbound") pendingProductLine = null;
+      var guessed = productPrefill(prefill.text || "");
+      var intro = prefill.source === "inbound" ? "库存中没有找到这个商品。已把入库时填写的内容带入，请补全带 * 的商品资料。" : "带 * 的项目必须填写；商品编号留空时由系统自动生成。";
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号</span><input id="newCode" value="' + esc(guessed.code) + '" placeholder="留空则系统生成" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.nextOnEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.nextOnEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
     },
-    closeModal: function () { document.getElementById("modalHost").innerHTML = ""; },
+    closeModal: function () {
+      pendingProductLine = null;
+      document.getElementById("modalHost").innerHTML = "";
+    },
     addProduct: function () {
-      var name = document.getElementById("newName").value.trim();
-      var code = document.getElementById("newCode").value.trim().toUpperCase();
-      var min = Number(document.getElementById("newMin").value);
-      if (!name) return errorAt("productError", "请填写商品名称。");
-      if (!Number.isInteger(min) || min < 0) return errorAt("productError", "最低库存必须是非负整数。");
+      var nameInput = document.getElementById("newName");
+      var codeInput = document.getElementById("newCode");
+      var unitInput = document.getElementById("newUnit");
+      var minInput = document.getElementById("newMin");
+      var name = nameInput.value.trim();
+      var code = codeInput.value.trim().toUpperCase();
+      var unit = unitInput.value.trim();
+      var min = Number(minInput.value);
+      var missingFields = [];
+      if (!name) missingFields.push(nameInput);
+      if (!unit) missingFields.push(unitInput);
+      if (!minInput.value.trim()) missingFields.push(minInput);
+      if (missingFields.length) {
+        flashFields(missingFields);
+        return errorAt("productError", "请填写所有红色闪烁的商品资料。");
+      }
+      if (!Number.isInteger(min) || min < 0) {
+        flashFields([minInput]);
+        return errorAt("productError", "最低库存必须是非负整数。");
+      }
       if (!code) {
         var max = state.products.reduce(function (value, p) { var match = /^SKU-(\d+)$/.exec(p.code); return Math.max(value, match ? Number(match[1]) : 0); }, 0);
         code = "SKU-" + String(max + 1).padStart(6, "0");
       }
-      if (state.products.some(function (p) { return p.code.toLowerCase() === code.toLowerCase(); })) return errorAt("productError", "商品编号 " + code + " 已存在。");
-      state.products.push({ id: uid("p"), code: code, name: name, unit: document.getElementById("newUnit").value.trim() || "件", status: document.getElementById("newStatus").value, min: min, stock: 0, avg: 0, supplier: document.getElementById("newSupplier").value.trim() });
+      if (state.products.some(function (p) { return p.code.toLowerCase() === code.toLowerCase(); })) {
+        flashFields([codeInput]);
+        return errorAt("productError", "商品编号 " + code + " 已存在。");
+      }
+      var product = { id: uid("p"), code: code, name: name, unit: unit, status: document.getElementById("newStatus").value, min: min, stock: 0, avg: 0, supplier: document.getElementById("newSupplier").value.trim() };
+      state.products.push(product);
+      var returningToInbound = pendingProductLine !== null && page === "inbound";
+      if (returningToInbound && draftLines[pendingProductLine]) draftLines[pendingProductLine].product = product.code + " · " + product.name;
+      pendingProductLine = null;
       save();
       render();
-      toast("商品已建立：" + name + "（" + code + "）");
+      toast(returningToInbound ? "商品已建立并带回入库明细，请继续确认入库。" : "商品已建立：" + name + "（" + code + "）");
     },
     exportBackup: function () {
       fetch("/api/backup", {
@@ -398,7 +553,8 @@
         try {
           var backup = JSON.parse(reader.result);
           if (!backup || backup.format !== "warehouse-offline-backup" || !backup.data || !Array.isArray(backup.data.products) || !Array.isArray(backup.data.documents)) throw new Error("文件格式不正确");
-          state = backup.data;
+          state = normalizeState(backup.data);
+          applyFontScale();
           save();
           page = "home";
           render();
@@ -419,6 +575,7 @@
     reset: function () {
       if (!confirm("确认清空全部商品、库存和流水？此操作不可撤销，建议先立即备份。")) return;
       state = initialData();
+      applyFontScale();
       save();
       page = "home";
       render();
