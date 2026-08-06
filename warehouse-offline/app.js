@@ -3,6 +3,8 @@
 
   var page = "home";
   var period = "day";
+  var reportToday = new Date();
+  var reportTarget = { year: reportToday.getFullYear(), month: reportToday.getMonth() + 1, day: reportToday.getDate() };
   var documentType = "inbound";
   var draftLines = [{ product: "", quantity: "", price: "" }];
   var draftSupplier = "";
@@ -265,11 +267,11 @@
   function documentView() {
     documentType = page;
     var inbound = documentType === "inbound";
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">' + (inbound ? "采购到货 · 库存增加" : "领用发货 · 库存减少") + '</p><h1>新建' + (inbound ? "入库" : "出库") + '单</h1><p>' + (inbound ? "输入库存中没有的商品时，提交后会自动打开新增商品窗口。" : "任何情况下都不允许负库存，成本由系统自动计算。") + '</p></div></section><section class="panel form"><div class="form-section"><div><h2>商品明细</h2><p>带 * 的项目必须填写；按 Enter 自动进入下一项</p></div><button class="export" onclick="Warehouse.addLine()">＋ 添加一行</button></div><datalist id="productList">' + productOptions() + '</datalist><div class="lines"><div class="lhead"><span>商品 *</span><span>当前库存</span><span>数量 *</span><span>' + (inbound ? "实际单价 *" : "计价方式") + '</span><span></span></div>' + draftLines.map(function (line, index) { var p = productFromText(line.product); return '<div class="line doc-line" data-index="' + index + '"><input data-field="product" list="productList" value="' + esc(line.product) + '" placeholder="输入品名或编号" onchange="Warehouse.syncLine(this)" onkeydown="Warehouse.nextOnEnter(event)"><span class="stock">' + (p ? p.stock + esc(p.unit) : "—") + '</span><input data-field="quantity" type="number" min="1" step="1" value="' + esc(line.quantity) + '" placeholder="填写数量" onkeydown="Warehouse.nextOnEnter(event)">' + (inbound ? '<input data-field="price" type="number" min="0" step="0.01" value="' + esc(line.price) + '" placeholder="¥ 0.00" onkeydown="Warehouse.nextOnEnter(event)">' : '<span class="cost-method">移动平均价</span>') + '<button type="button" aria-label="删除这一行" onclick="Warehouse.removeLine(' + index + ')">×</button></div>'; }).join("") + '</div><div class="form-meta-title"><h2>' + (inbound ? "供应商信息" : "出库信息") + '</h2><p>' + (inbound ? "商品明细填写完成后，再填写本次实际供应商。" : "说明本次商品的领用或出库用途。") + '</p></div><div class="meta ' + (inbound ? "inbound-meta" : "outbound-meta") + '">' + (inbound ? '<label><span>实际供应商 *</span><input id="docSupplier" value="' + esc(draftSupplier) + '" placeholder="供应商名称" onkeydown="Warehouse.nextOnEnter(event)"></label><label><span>供应商单号</span><input id="docRef" value="' + esc(draftRef) + '" placeholder="选填" onkeydown="Warehouse.nextOnEnter(event)"></label>' : '<label><span>用途 *</span><input id="docPurpose" value="' + esc(draftPurpose) + '" placeholder="例如：生产领用" onkeydown="Warehouse.nextOnEnter(event)"></label>') + '</div><div id="docError"></div><div class="form-foot"><p>共 ' + draftLines.length + ' 行商品明细 · 操作人自动记录</p><button class="primary" onclick="Warehouse.submitDocument()">确认' + (inbound ? "入库" : "出库") + '</button></div></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">' + (inbound ? "采购到货 · 库存增加" : "领用发货 · 库存减少") + '</p><h1>新建' + (inbound ? "入库" : "出库") + '单</h1><p>' + (inbound ? "输入库存中没有的商品时，提交后会自动打开新增商品窗口。" : "任何情况下都不允许负库存，成本由系统自动计算。") + '</p></div></section><section class="panel form"><div class="form-section"><div><h2>商品明细</h2><p>带 * 的项目必须填写；按 Enter 自动进入下一项</p></div><button class="export" onclick="Warehouse.addLine()">＋ 添加一行</button></div><datalist id="productList">' + productOptions() + '</datalist><div class="lines"><div class="lhead"><span>商品 *</span><span>当前库存</span><span>数量 *</span><span>' + (inbound ? "实际单价 *" : "计价方式") + '</span><span></span></div>' + draftLines.map(function (line, index) { var p = productFromText(line.product); return '<div class="line doc-line" data-index="' + index + '"><input data-field="product" list="productList" value="' + esc(line.product) + '" placeholder="输入品名或编号" onchange="Warehouse.syncLine(this)" onkeydown="Warehouse.nextOnEnter(event)"><span class="stock">' + (p ? p.stock + esc(p.unit) : "—") + '</span><input data-field="quantity" type="number" min="1" step="1" value="' + esc(line.quantity) + '" placeholder="填写数量" onkeydown="Warehouse.nextOnEnter(event)">' + (inbound ? '<input data-field="price" type="number" min="0" step="0.01" value="' + esc(line.price) + '" placeholder="¥ 0.00" onkeydown="Warehouse.nextOnEnter(event)">' : '<span class="cost-method">移动平均价</span>') + '<button type="button" aria-label="删除这一行" onclick="Warehouse.removeLine(' + index + ')">×</button></div>'; }).join("") + '</div><div class="form-meta-title"><h2>' + (inbound ? "供应商信息" : "出库信息") + '</h2><p>' + (inbound ? "商品明细填写完成后，再填写本次实际供应商。" : "说明本次商品的领用或出库用途。") + '</p></div><div class="meta ' + (inbound ? "inbound-meta" : "outbound-meta") + '">' + (inbound ? '<label><span>实际供应商 *</span><input id="docSupplier" value="' + esc(draftSupplier) + '" placeholder="供应商名称" onkeydown="Warehouse.nextOnEnter(event)"></label><label><span>供应商单号</span><input id="docRef" value="' + esc(draftRef) + '" placeholder="选填" onkeydown="Warehouse.nextOnEnter(event)"></label>' : '<label><span>用途 *</span><input id="docPurpose" value="' + esc(draftPurpose) + '" placeholder="例如：生产领用" onkeydown="Warehouse.nextOnEnter(event)"></label>') + '</div><div id="docError"></div><div class="form-foot"><p>共 ' + draftLines.length + ' 行商品明细 · 操作人自动记录</p><button class="primary primary-action" onclick="Warehouse.submitDocument()">确认' + (inbound ? "入库" : "出库") + '</button></div></section></div>';
   }
 
   function stocktakeView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">账实核对 · 自动留痕</p><h1>库存盘点</h1><p>填写实盘数量，系统生成盘盈盘亏流水。</p></div></section><section class="panel scroll"><div class="toolbar"><input id="stocktakePurpose" class="search" value="定期盘点" placeholder="盘点说明"></div><div class="table"><div class="thead" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><span>商品</span><span>账面数量</span><span>实盘数量</span><span>差异</span></div>' + activeProducts().map(function (p) { return '<div class="trow stock-row" data-product="' + p.id + '" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></div></div><div>' + p.stock + ' ' + esc(p.unit) + '</div><input class="search counted" type="number" min="0" step="1" placeholder="' + p.stock + '" oninput="Warehouse.stockDiff(this,' + p.stock + ',\'' + esc(p.unit) + '\')"><div class="diff">—</div></div>'; }).join("") + '</div><div id="stockError"></div><div class="form-foot"><p>只提交已填写且与账面数量不同的商品。</p><button class="primary" onclick="Warehouse.submitStocktake()">提交盘点</button></div></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">账实核对 · 自动留痕</p><h1>库存盘点</h1><p>填写实盘数量，系统生成盘盈盘亏流水。</p></div></section><section class="panel scroll"><div class="toolbar"><input id="stocktakePurpose" class="search" value="定期盘点" placeholder="盘点说明"></div><div class="table"><div class="thead" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><span>商品</span><span>账面数量</span><span>实盘数量</span><span>差异</span></div>' + activeProducts().map(function (p) { return '<div class="trow stock-row" data-product="' + p.id + '" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></div></div><div>' + p.stock + ' ' + esc(p.unit) + '</div><input class="search counted" type="number" min="0" step="1" placeholder="' + p.stock + '" oninput="Warehouse.stockDiff(this,' + p.stock + ',\'' + esc(p.unit) + '\')"><div class="diff">—</div></div>'; }).join("") + '</div><div id="stockError"></div><div class="form-foot"><p>只提交已填写且与账面数量不同的商品。</p><button class="primary primary-action" onclick="Warehouse.submitStocktake()">提交盘点</button></div></section></div>';
   }
 
   function reportsView() {
@@ -281,11 +283,11 @@
     var outQty = sumQty(docs, "outbound");
     var inValue = valueOf(inbound, true);
     var outValue = valueOf(outbound, false);
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">离线库存汇总</p><h1>库存报表</h1><p>日报、月报和年报均可导出 Excel。</p></div><button class="export" onclick="Warehouse.exportExcel(true)">⇩ 导出当前报表</button></section><div class="tabs"><button class="' + (period === "day" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'day\')">日报</button><button class="' + (period === "month" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'month\')">月报</button><button class="' + (period === "year" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'year\')">年报</button></div><section class="report-cards"><article><span>入库数量</span><strong>' + inQty + ' 件</strong><p>' + inbound.length + ' 张单 · ' + money(inValue) + '</p></article><article><span>出库数量</span><strong>' + outQty + ' 件</strong><p>' + outbound.length + ' 张单 · ' + money(outValue) + '</p></article><article><span>盘点调整</span><strong>' + stocktakes.length + ' 次</strong><p>' + stocktakes.reduce(function (s, d) { return s + d.items.length; }, 0) + ' 项盘盈盘亏</p></article></section><section class="panel"><div class="panel-head"><h2>单据明细</h2><span class="status">' + docs.length + ' 张</span></div>' + activityRows(docs) + '</section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">离线库存汇总</p><h1>库存报表</h1><p>当前查看：' + reportPeriodLabel() + ' · ' + reportFilterValue() + '</p></div><button class="export" onclick="Warehouse.exportExcel(true)">⇩ 导出当前报表</button></section><div class="report-controls"><div class="tabs"><button class="' + (period === "day" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'day\')">日报</button><button class="' + (period === "month" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'month\')">月报</button><button class="' + (period === "year" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'year\')">年报</button></div>' + reportDatePicker() + '</div><section class="report-cards"><article><span>入库数量</span><strong>' + inQty + ' 件</strong><p>' + inbound.length + ' 张单 · ' + money(inValue) + '</p></article><article><span>出库数量</span><strong>' + outQty + ' 件</strong><p>' + outbound.length + ' 张单 · ' + money(outValue) + '</p></article><article><span>盘点调整</span><strong>' + stocktakes.length + ' 次</strong><p>' + stocktakes.reduce(function (s, d) { return s + d.items.length; }, 0) + ' 项盘盈盘亏</p></article></section><section class="panel"><div class="panel-head"><h2>' + reportPeriodLabel() + '单据明细</h2><span class="status">' + docs.length + ' 张</span></div>' + activityRows(docs) + '</section></div>';
   }
 
   function productsView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>零库存商品可直接移除；有库存商品清空并移除时需要连续确认两次。</p></div><button class="primary" onclick="Warehouse.productModal()">＋ 新增商品</button></section><section class="panel scroll">' + inventoryTable(activeProducts(), true) + '</section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>零库存商品可直接移除；有库存商品清空并移除时需要连续确认两次。</p></div><button class="primary primary-action" onclick="Warehouse.productModal()">＋ 新增商品</button></section><section class="panel scroll">' + inventoryTable(activeProducts(), true) + '</section></div>';
   }
 
   function settingsView() {
@@ -303,13 +305,26 @@
   function valueOf(docs, inbound) {
     return docs.reduce(function (sum, d) { return sum + d.items.reduce(function (s, line) { return s + Math.abs(line.quantity) * (inbound ? line.price : line.cost); }, 0); }, 0);
   }
+  function padTwo(value) { return String(value).padStart(2, "0"); }
+  function clampReportDay() { reportTarget.day = Math.min(reportTarget.day, new Date(reportTarget.year, reportTarget.month, 0).getDate()); }
+  function reportPeriodLabel() { return period === "day" ? "日报" : period === "month" ? "月报" : "年报"; }
+  function reportFilterValue() {
+    if (period === "day") return reportTarget.year + "-" + padTwo(reportTarget.month) + "-" + padTwo(reportTarget.day);
+    if (period === "month") return reportTarget.year + "-" + padTwo(reportTarget.month);
+    return String(reportTarget.year);
+  }
+  function reportDatePicker() {
+    var label = period === "day" ? "查看日期" : period === "month" ? "查看月份" : "查看年份";
+    var type = period === "day" ? "date" : period === "month" ? "month" : "number";
+    var limits = period === "year" ? ' min="1900" max="2100" step="1"' : "";
+    return '<label class="report-date"><span>' + label + '</span><input type="' + type + '" value="' + reportFilterValue() + '"' + limits + ' onchange="Warehouse.setReportDate(this.value)"></label>';
+  }
   function filteredDocs() {
-    var current = new Date();
     return state.documents.filter(function (doc) {
       var value = new Date(doc.at);
-      if (period === "day") return value.toDateString() === current.toDateString();
-      if (period === "month") return value.getFullYear() === current.getFullYear() && value.getMonth() === current.getMonth();
-      return value.getFullYear() === current.getFullYear();
+      if (period === "day") return value.getFullYear() === reportTarget.year && value.getMonth() + 1 === reportTarget.month && value.getDate() === reportTarget.day;
+      if (period === "month") return value.getFullYear() === reportTarget.year && value.getMonth() + 1 === reportTarget.month;
+      return value.getFullYear() === reportTarget.year;
     });
   }
 
@@ -319,8 +334,12 @@
     clearTimeout(toastTimer);
     clearTimeout(toastRemoveTimer);
     var node = document.createElement("div");
-    node.className = "success";
-    node.textContent = "✓ " + message;
+    node.className = "success" + (typeof message === "object" ? " success-card" : "");
+    if (typeof message === "object") {
+      node.innerHTML = '<span class="success-check">✓</span><div class="success-main"><strong>' + esc(message.title) + '</strong><small>' + esc(message.no) + '</small><p>' + esc(message.products) + '</p><div class="success-meta"><b>' + esc(message.quantity) + '</b><span>' + esc(message.detail) + '</span></div></div>';
+    } else {
+      node.textContent = "✓ " + message;
+    }
     document.body.appendChild(node);
     toastTimer = setTimeout(function () { node.classList.add("hide"); }, 3000);
     toastRemoveTimer = setTimeout(function () { node.remove(); }, 3600);
@@ -533,7 +552,8 @@
       var count = state.documents.length + 1;
       var no = (documentType === "inbound" ? "RK" : "CK") + "-OFF-" + String(count).padStart(4, "0");
       var purpose = documentType === "inbound" ? "采购入库" : purposeInput.value.trim();
-      state.documents.unshift({ id: docId, no: no, type: documentType, purpose: purpose, supplier: supplierInput ? supplierInput.value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", at: now(), operator: "离线管理员", items: items });
+      var completedDocument = { id: docId, no: no, type: documentType, purpose: purpose, supplier: supplierInput ? supplierInput.value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", at: now(), operator: "离线管理员", items: items };
+      state.documents.unshift(completedDocument);
       save();
       draftLines = [{ product: "", quantity: "", price: "" }];
       draftSupplier = "";
@@ -541,7 +561,13 @@
       draftPurpose = "";
       page = "home";
       render();
-      toast((documentType === "inbound" ? "入库" : "出库") + "成功：" + no);
+      toast({
+        title: documentType === "inbound" ? "入库登记成功" : "出库登记成功",
+        no: no,
+        products: parsed.map(function (entry) { return entry.product.name; }).join("、"),
+        quantity: "共 " + parsed.reduce(function (sum, entry) { return sum + entry.quantity; }, 0) + " 件",
+        detail: documentType === "inbound" ? (completedDocument.supplier || "未填写供应商") : completedDocument.purpose
+      });
     },
     stockDiff: function (input, book, unit) {
       var diff = input.value === "" ? 0 : Number(input.value) - book;
@@ -571,6 +597,21 @@
       toast("盘点完成：" + no);
     },
     setPeriod: function (value) { period = value; render(); },
+    setReportDate: function (value) {
+      if (!value) return;
+      var parts = String(value).split("-").map(Number);
+      if (period === "day" && parts.length === 3) {
+        reportTarget.year = parts[0]; reportTarget.month = parts[1]; reportTarget.day = parts[2];
+      } else if (period === "month" && parts.length === 2) {
+        reportTarget.year = parts[0]; reportTarget.month = parts[1];
+      } else if (period === "year") {
+        var year = Number(value);
+        if (!Number.isInteger(year) || year < 1900 || year > 2100) return;
+        reportTarget.year = year;
+      }
+      clampReportDay();
+      render();
+    },
     productModal: function (prefill) {
       prefill = prefill || {};
       if (prefill.source !== "inbound") pendingProductLine = null;
@@ -666,7 +707,8 @@
       var movements = [["日期", "单号", "类型", "商品编号", "品名", "数量", "单位", "用途", "单价/成本", "金额"]];
       docs.forEach(function (doc) { doc.items.forEach(function (line) { var p = productById(line.productId) || { code: "", name: "未知商品", unit: "" }; var unit = doc.type === "inbound" ? line.price : line.cost; movements.push([doc.at.slice(0, 10), doc.no, typeLabel(doc.type), p.code, p.name, doc.type === "stocktake" ? line.counted : line.quantity, p.unit, doc.purpose, unit / 100, Math.abs(line.quantity) * unit / 100]); }); });
       var xml = '<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' + xmlSheet("库存", inventory) + xmlSheet("流水", movements) + "</Workbook>";
-      download("仓储台离线数据-" + new Date().toISOString().slice(0, 10) + ".xls", "\ufeff" + xml, "application/vnd.ms-excel");
+      var exportName = currentPeriod ? ("仓储台" + reportPeriodLabel() + "-" + reportFilterValue() + ".xls") : ("仓储台离线数据-" + new Date().toISOString().slice(0, 10) + ".xls");
+      download(exportName, "\ufeff" + xml, "application/vnd.ms-excel");
       toast("Excel 已导出。");
     },
     reset: function () {
