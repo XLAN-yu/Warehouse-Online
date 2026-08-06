@@ -25,14 +25,39 @@
       version: 1,
       products: [],
       documents: [],
-      settings: { fontScale: 1 }
+      settings: { fontScale: 1 },
+      undoHistory: []
     };
   }
 
   function normalizeState(value) {
     if (!value.settings) value.settings = { fontScale: 1 };
-    if ([1, 1.1, 1.2].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
+    if ([1, 1.2, 1.5].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
+    if (!Array.isArray(value.undoHistory)) value.undoHistory = [];
+    value.products.forEach(function (product) { product.archived = product.archived === true; });
     return value;
+  }
+
+  function activeProducts() {
+    return state.products.filter(function (product) { return !product.archived; });
+  }
+
+  function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function recordUndo(label) {
+    state.undoHistory.push({
+      id: uid("undo"),
+      label: label,
+      at: now(),
+      snapshot: {
+        products: clone(state.products),
+        documents: clone(state.documents),
+        settings: clone(state.settings)
+      }
+    });
+    if (state.undoHistory.length > 20) state.undoHistory.shift();
   }
 
   function applyFontScale() {
@@ -115,11 +140,12 @@
   function productFromText(text) {
     var term = String(text || "").trim().toLowerCase();
     if (!term) return;
-    var exact = state.products.find(function (item) {
+    var available = activeProducts();
+    var exact = available.find(function (item) {
       return item.id === term || item.code.toLowerCase() === term || item.name.toLowerCase() === term || (item.code + " · " + item.name).toLowerCase() === term;
     });
     if (exact) return exact;
-    var matches = state.products.filter(function (item) {
+    var matches = available.filter(function (item) {
       return item.code.toLowerCase().indexOf(term) >= 0 || item.name.toLowerCase().indexOf(term) >= 0;
     });
     return matches.length === 1 ? matches[0] : undefined;
@@ -134,10 +160,12 @@
 
   function render() {
     var root = document.getElementById("app");
+    var lastUndo = state.undoHistory.length ? state.undoHistory[state.undoHistory.length - 1] : null;
     root.innerHTML =
       '<main class="shell">' +
         '<aside class="side">' +
           '<div class="brand"><span class="brand-mark">仓</span><div><strong>仓储台</strong><small>离线库存管理</small></div></div>' +
+          '<div class="undo-zone"><button class="undo-button" onclick="Warehouse.undoLast()" ' + (lastUndo ? "" : "disabled") + '><span>↶</span><div><strong>撤回上一步</strong><small>' + (lastUndo ? esc(lastUndo.label) : "暂无可撤回操作") + '</small></div></button></div>' +
           '<nav class="nav">' +
             navButton("home", "工作台", "⌂") +
             navButton("products", "商品资料", "◇") +
@@ -174,16 +202,17 @@
   }
 
   function homeView() {
+    var products = activeProducts();
     var today = new Date().toISOString().slice(0, 10);
     var todays = state.documents.filter(function (doc) { return doc.at.slice(0, 10) === today; });
     var inQty = sumQty(todays, "inbound");
     var outQty = sumQty(todays, "outbound");
-    var low = state.products.filter(function (p) { return p.stock <= p.min; });
-    var value = state.products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
+    var low = products.filter(function (p) { return p.stock <= p.min; });
+    var value = products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
     return '<div class="stack">' +
       '<button class="hero" onclick="Warehouse.showGuide()"><div><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></div><div class="hero-badge"><b>' + new Date().getDate() + '</b><small>' + esc(new Intl.DateTimeFormat("zh-CN", { month: "long", weekday: "short" }).format(new Date())) + '</small></div></button>' +
       '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
-      '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + state.products.length + '<small> 种</small></strong><p>' + fmt(state.products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
+      '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
     '</div>';
   }
@@ -198,12 +227,13 @@
   }
 
   function inventoryView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">实时库存</p><h1>查看库存</h1><p>低于或等于最低库存时自动提醒。</p></div><button class="export" onclick="Warehouse.exportExcel()">⇩ 导出 Excel</button></section><section class="panel scroll"><div class="toolbar"><input id="inventorySearch" class="search" placeholder="搜索品名或编号" oninput="Warehouse.filterInventory(this.value)"><span class="result">' + state.products.length + ' 种商品</span></div><div id="inventoryTable">' + inventoryTable(state.products) + '</div></section></div>';
+    var products = activeProducts();
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">实时库存</p><h1>查看库存</h1><p>低于或等于最低库存时自动提醒。</p></div><button class="export" onclick="Warehouse.exportExcel()">⇩ 导出 Excel</button></section><section class="panel scroll"><div class="toolbar"><input id="inventorySearch" class="search" placeholder="搜索品名或编号" oninput="Warehouse.filterInventory(this.value)"><span class="result">' + products.length + ' 种商品</span></div><div id="inventoryTable">' + inventoryTable(products, false) + '</div></section></div>';
   }
 
-  function inventoryTable(products) {
-    return '<div class="table"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>平均成本</span><span>库存金额</span></div>' + products.map(function (p) {
-      return '<div class="trow"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · " + p.supplier) + '</small></div></div><div><span class="status">' + esc(p.status) + '</span></div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div>' + money(p.avg * p.stock) + '</div></div>';
+  function inventoryTable(products, editable) {
+    return '<div class="table ' + (editable ? "product-admin-table" : "") + '"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>平均成本</span><span>库存金额</span>' + (editable ? '<span>操作</span>' : "") + '</div>' + products.map(function (p) {
+      return '<div class="trow"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · " + p.supplier) + '</small></div></div><div><span class="status">' + esc(p.status) + '</span></div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div>' + money(p.avg * p.stock) + '</div>' + (editable ? '<div><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div>' : "") + '</div>';
     }).join("") + '</div>';
   }
 
@@ -229,7 +259,7 @@
   }
 
   function productOptions() {
-    return state.products.map(function (p) { return '<option value="' + esc(p.code + " · " + p.name) + '"></option>'; }).join("");
+    return activeProducts().map(function (p) { return '<option value="' + esc(p.code + " · " + p.name) + '"></option>'; }).join("");
   }
 
   function documentView() {
@@ -239,7 +269,7 @@
   }
 
   function stocktakeView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">账实核对 · 自动留痕</p><h1>库存盘点</h1><p>填写实盘数量，系统生成盘盈盘亏流水。</p></div></section><section class="panel scroll"><div class="toolbar"><input id="stocktakePurpose" class="search" value="定期盘点" placeholder="盘点说明"></div><div class="table"><div class="thead" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><span>商品</span><span>账面数量</span><span>实盘数量</span><span>差异</span></div>' + state.products.map(function (p) { return '<div class="trow stock-row" data-product="' + p.id + '" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></div></div><div>' + p.stock + ' ' + esc(p.unit) + '</div><input class="search counted" type="number" min="0" step="1" placeholder="' + p.stock + '" oninput="Warehouse.stockDiff(this,' + p.stock + ',\'' + esc(p.unit) + '\')"><div class="diff">—</div></div>'; }).join("") + '</div><div id="stockError"></div><div class="form-foot"><p>只提交已填写且与账面数量不同的商品。</p><button class="primary" onclick="Warehouse.submitStocktake()">提交盘点</button></div></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">账实核对 · 自动留痕</p><h1>库存盘点</h1><p>填写实盘数量，系统生成盘盈盘亏流水。</p></div></section><section class="panel scroll"><div class="toolbar"><input id="stocktakePurpose" class="search" value="定期盘点" placeholder="盘点说明"></div><div class="table"><div class="thead" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><span>商品</span><span>账面数量</span><span>实盘数量</span><span>差异</span></div>' + activeProducts().map(function (p) { return '<div class="trow stock-row" data-product="' + p.id + '" style="grid-template-columns:minmax(260px,1.5fr) 130px 160px 130px"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></div></div><div>' + p.stock + ' ' + esc(p.unit) + '</div><input class="search counted" type="number" min="0" step="1" placeholder="' + p.stock + '" oninput="Warehouse.stockDiff(this,' + p.stock + ',\'' + esc(p.unit) + '\')"><div class="diff">—</div></div>'; }).join("") + '</div><div id="stockError"></div><div class="form-foot"><p>只提交已填写且与账面数量不同的商品。</p><button class="primary" onclick="Warehouse.submitStocktake()">提交盘点</button></div></section></div>';
   }
 
   function reportsView() {
@@ -255,12 +285,12 @@
   }
 
   function productsView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>编号可人工填写或由系统自动生成，重复编号会被拦截。</p></div><button class="primary" onclick="Warehouse.productModal()">＋ 新增商品</button></section><section class="panel scroll">' + inventoryTable(state.products) + '</section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>零库存商品可直接移除；有库存商品清空并移除时需要连续确认两次。</p></div><button class="primary" onclick="Warehouse.productModal()">＋ 新增商品</button></section><section class="panel scroll">' + inventoryTable(activeProducts(), true) + '</section></div>';
   }
 
   function settingsView() {
     var current = Number(state.settings.fontScale || 1);
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">阅读与显示</p><h1>全局字体大小</h1><p>选择后立即生效，并随 data 文件夹中的仓库数据保存。</p></div></section><section class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.1)"><b>较大</b><span>文字和控件同步增大</span><em>110%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>特大</b><span>适合远距离查看</span><em>120%</em></button></section><section class="panel settings-note"><h2>提示</h2><p>字号增大后，一屏显示的内容会减少；可随时返回这里调整。</p></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">阅读与显示</p><h1>全局字体大小</h1><p>选择后文字和按钮同步适应，并随 data 文件夹中的仓库数据保存。</p></div></section><section class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>较大</b><span>文字和按钮同步增大</span><em>120%</em></button><button class="setting-option ' + (current === 1.5 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.5)"><b>特大</b><span>适合远距离查看</span><em>150%</em></button></section><section class="panel settings-note"><h2>提示</h2><p>字号增大后，一屏显示的内容会减少；按钮和输入框会自动适应。</p></section></div>';
   }
 
   function backupView() {
@@ -336,6 +366,8 @@
       document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card guide-card"><p class="eyebrow">仓储台使用方法</p><h2>先建商品，再做出入库</h2><div class="guide-steps"><article><b>1</b><div><h3>建立商品资料</h3><p>第一次收到某种商品时，先填写品名、编号、单位、最低库存和默认供应商。</p></div></article><article><b>2</b><div><h3>登记商品入库</h3><p>选择商品，填写数量、实际单价和本次供应商，系统自动增加库存并计算移动平均价。</p></div></article><article><b>3</b><div><h3>登记商品出库</h3><p>选择商品并填写数量和用途；超过现有库存时，系统会直接禁止提交。</p></div></article></div><div class="modal-actions"><button class="primary" onclick="Warehouse.closeModal()">知道了</button></div></div></div>';
     },
     setFontScale: function (value) {
+      if (Number(state.settings.fontScale) === Number(value)) return;
+      recordUndo("调整字体为 " + Math.round(Number(value) * 100) + "%");
       state.settings.fontScale = Number(value);
       applyFontScale();
       save();
@@ -350,10 +382,62 @@
         setTimeout(function () { fields[index + 1].focus(); }, 0);
       }
     },
+    undoLast: function () {
+      if (!state.undoHistory.length) return;
+      var entry = state.undoHistory.pop();
+      var remainingHistory = state.undoHistory;
+      state = normalizeState({
+        version: 1,
+        products: clone(entry.snapshot.products),
+        documents: clone(entry.snapshot.documents),
+        settings: clone(entry.snapshot.settings),
+        undoHistory: remainingHistory
+      });
+      applyFontScale();
+      save();
+      render();
+      toast("已撤回：" + entry.label);
+    },
     filterInventory: function (query) {
       var term = String(query || "").toLowerCase();
-      var filtered = state.products.filter(function (p) { return (p.code + " " + p.name + " " + p.supplier).toLowerCase().indexOf(term) >= 0; });
-      document.getElementById("inventoryTable").innerHTML = inventoryTable(filtered);
+      var filtered = activeProducts().filter(function (p) { return (p.code + " " + p.name + " " + p.supplier).toLowerCase().indexOf(term) >= 0; });
+      document.getElementById("inventoryTable").innerHTML = inventoryTable(filtered, false);
+    },
+    removeProduct: function (id) {
+      var product = productById(id);
+      if (!product || product.archived) return;
+      if (product.stock === 0) {
+        if (!confirm("确定移除“" + product.name + "”吗？历史出入库记录仍会保留。")) return;
+        recordUndo("移除商品：" + product.name);
+        product.archived = true;
+        product.status = "已移除";
+        save();
+        render();
+        return toast("已移除零库存商品：" + product.name);
+      }
+      if (!confirm("“" + product.name + "”当前还有 " + product.stock + product.unit + "。继续将把库存清空为 0 并移除商品，是否继续？")) return;
+      if (!confirm("二次确认：确定清空并移除“" + product.name + "”吗？此操作会生成库存清空记录。")) return;
+      recordUndo("清空并移除商品：" + product.name);
+      var before = product.stock;
+      var oldAverage = product.avg;
+      product.stock = 0;
+      product.avg = 0;
+      product.archived = true;
+      product.status = "已移除";
+      state.documents.unshift({
+        id: uid("d"),
+        no: "PD-OFF-" + String(state.documents.length + 1).padStart(4, "0"),
+        type: "stocktake",
+        purpose: "清空库存并移除商品",
+        supplier: "",
+        ref: "",
+        at: now(),
+        operator: "离线管理员",
+        items: [{ productId: product.id, quantity: -before, counted: 0, price: 0, cost: oldAverage, before: before, after: 0 }]
+      });
+      save();
+      render();
+      toast("已清空库存并移除商品：" + product.name);
     },
     addLine: function () {
       collectDraftLines();
@@ -435,6 +519,7 @@
         parsed.push({ product: p, quantity: quantity, price: price });
       }
       var docId = uid("d");
+      recordUndo((documentType === "inbound" ? "商品入库：" : "商品出库：") + parsed.map(function (entry) { return entry.product.name; }).join("、"));
       var items = parsed.map(function (entry) {
         var p = entry.product;
         var before = p.stock;
@@ -476,6 +561,7 @@
         if (counted !== p.stock) changed.push({ product: p, counted: counted });
       }
       if (!changed.length) return errorAt("stockError", "请至少填写一项与账面数量不同的实盘数量。");
+      recordUndo("库存盘点：" + changed.map(function (entry) { return entry.product.name; }).join("、"));
       var items = changed.map(function (entry) { var before = entry.product.stock; entry.product.stock = entry.counted; return { productId: entry.product.id, quantity: entry.counted - before, counted: entry.counted, price: 0, cost: entry.product.avg, before: before, after: entry.counted }; });
       var no = "PD-OFF-" + String(state.documents.length + 1).padStart(4, "0");
       state.documents.unshift({ id: uid("d"), no: no, type: "stocktake", purpose: document.getElementById("stocktakePurpose").value.trim() || "离线盘点", supplier: "", ref: "", at: now(), operator: "离线管理员", items: items });
@@ -526,6 +612,7 @@
         return errorAt("productError", "商品编号 " + code + " 已存在。");
       }
       var product = { id: uid("p"), code: code, name: name, unit: unit, status: document.getElementById("newStatus").value, min: min, stock: 0, avg: 0, supplier: document.getElementById("newSupplier").value.trim() };
+      recordUndo("新增商品：" + name);
       state.products.push(product);
       var returningToInbound = pendingProductLine !== null && page === "inbound";
       if (returningToInbound && draftLines[pendingProductLine]) draftLines[pendingProductLine].product = product.code + " · " + product.name;
@@ -560,7 +647,10 @@
         try {
           var backup = JSON.parse(reader.result);
           if (!backup || backup.format !== "warehouse-offline-backup" || !backup.data || !Array.isArray(backup.data.products) || !Array.isArray(backup.data.documents)) throw new Error("文件格式不正确");
+          recordUndo("恢复备份");
+          var preservedHistory = state.undoHistory;
           state = normalizeState(backup.data);
+          state.undoHistory = preservedHistory;
           applyFontScale();
           save();
           page = "home";
@@ -572,7 +662,7 @@
     },
     exportExcel: function (currentPeriod) {
       var docs = currentPeriod ? filteredDocs() : state.documents;
-      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "移动平均价", "库存金额"]].concat(state.products.map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, p.avg / 100, p.avg * p.stock / 100]; }));
+      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "移动平均价", "库存金额"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, p.avg / 100, p.avg * p.stock / 100]; }));
       var movements = [["日期", "单号", "类型", "商品编号", "品名", "数量", "单位", "用途", "单价/成本", "金额"]];
       docs.forEach(function (doc) { doc.items.forEach(function (line) { var p = productById(line.productId) || { code: "", name: "未知商品", unit: "" }; var unit = doc.type === "inbound" ? line.price : line.cost; movements.push([doc.at.slice(0, 10), doc.no, typeLabel(doc.type), p.code, p.name, doc.type === "stocktake" ? line.counted : line.quantity, p.unit, doc.purpose, unit / 100, Math.abs(line.quantity) * unit / 100]); }); });
       var xml = '<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' + xmlSheet("库存", inventory) + xmlSheet("流水", movements) + "</Workbook>";
@@ -580,8 +670,11 @@
       toast("Excel 已导出。");
     },
     reset: function () {
-      if (!confirm("确认清空全部商品、库存和流水？此操作不可撤销，建议先立即备份。")) return;
+      if (!confirm("确认清空全部商品、库存和流水？清空后可通过左侧“撤回上一步”恢复，但仍建议先立即备份。")) return;
+      recordUndo("清空全部数据");
+      var preservedHistory = state.undoHistory;
       state = initialData();
+      state.undoHistory = preservedHistory;
       applyFontScale();
       save();
       page = "home";

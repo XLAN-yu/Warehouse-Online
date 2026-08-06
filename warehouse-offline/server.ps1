@@ -17,7 +17,7 @@ function Write-Utf8File {
 }
 
 function Get-EmptyStateJson {
-  return '{"version":1,"products":[],"documents":[],"settings":{"fontScale":1}}'
+  return '{"version":1,"products":[],"documents":[],"settings":{"fontScale":1},"undoHistory":[]}'
 }
 
 function Test-StateJson {
