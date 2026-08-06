@@ -80,7 +80,10 @@
   }
 
   function applyFontScale() {
-    document.body.style.zoom = String(state.settings && state.settings.fontScale ? state.settings.fontScale : 1);
+    var scale = Number(state.settings && state.settings.fontScale ? state.settings.fontScale : 1);
+    document.body.style.zoom = String(scale);
+    if (document.body.style.setProperty) document.body.style.setProperty("--font-scale", String(scale));
+    else document.body.style["--font-scale"] = String(scale);
   }
 
   function load() {
