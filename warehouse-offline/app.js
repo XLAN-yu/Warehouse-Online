@@ -214,6 +214,24 @@
     return '<button class="' + (page === id ? "active" : "") + '" onclick="Warehouse.go(\'' + id + '\')"><span>' + glyph + '</span>' + label + "</button>";
   }
 
+  function enhanceDocumentForm() {
+    if (page !== "inbound") return;
+    var input = document.getElementById("docSupplier");
+    if (!input || !input.parentNode) return;
+    input.placeholder = "选择商品后自动填写";
+    var wrapper = document.createElement("span");
+    wrapper.className = "clearable-input";
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    var clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.textContent = "×";
+    clearButton.title = "清空供应商";
+    clearButton.setAttribute("aria-label", "清空实际供应商");
+    clearButton.onclick = function () { window.Warehouse.clearDocumentSupplier(); };
+    wrapper.appendChild(clearButton);
+  }
+
   function render() {
     var root = document.getElementById("app");
     var lastUndo = state.undoHistory.length ? state.undoHistory[state.undoHistory.length - 1] : null;
@@ -243,6 +261,7 @@
           '</div>' +
         '</section>' +
       '</main><div id="modalHost"></div>';
+    enhanceDocumentForm();
   }
 
   function pageView() {
@@ -470,6 +489,11 @@
   function errorAt(id, message) {
     var host = document.getElementById(id);
     if (host) host.innerHTML = '<div class="error">' + esc(message) + '</div>';
+  }
+
+  function purposeError() {
+    var host = document.getElementById("docError");
+    if (host) host.innerHTML = '<div class="error error-with-action"><span>请填写所有红色闪烁的必填项目。</span><button type="button" onclick="Warehouse.ignorePurpose()">忽略用途</button></div>';
   }
 
   function download(name, content, type) {
@@ -769,9 +793,22 @@
       if (p && documentType === "inbound" && priceInput) {
         var previousPrice = lastInboundPrice(p.id);
         if (previousPrice !== null) priceInput.value = (previousPrice / 100).toFixed(2);
+        var supplierInput = document.getElementById("docSupplier");
+        if (supplierInput && !supplierInput.value.trim() && p.supplier) {
+          supplierInput.value = p.supplier;
+          draftSupplier = p.supplier;
+        }
       }
     },
-    submitDocument: function () {
+    clearDocumentSupplier: function () {
+      var input = document.getElementById("docSupplier");
+      draftSupplier = "";
+      if (input) { input.value = ""; input.focus(); }
+    },
+    ignorePurpose: function () {
+      window.Warehouse.submitDocument(true);
+    },
+    submitDocument: function (ignorePurpose) {
       collectDraftLines();
       collectDraftMeta();
       var supplierInput = documentType === "inbound" ? document.getElementById("docSupplier") : null;
@@ -779,7 +816,7 @@
       var rowNodes = Array.prototype.slice.call(document.querySelectorAll(".doc-line"));
       var missingFields = [];
       if (supplierInput && !supplierInput.value.trim()) missingFields.push(supplierInput);
-      if (purposeInput && !purposeInput.value.trim()) missingFields.push(purposeInput);
+      if (purposeInput && !purposeInput.value.trim() && !ignorePurpose) missingFields.push(purposeInput);
       rowNodes.forEach(function (row) {
         var productField = row.querySelector("[data-field=product]");
         var quantityField = row.querySelector("[data-field=quantity]");
@@ -790,6 +827,7 @@
       });
       if (missingFields.length) {
         flashFields(missingFields);
+        if (purposeInput && !purposeInput.value.trim() && !ignorePurpose) return purposeError();
         return errorAt("docError", "请填写所有红色闪烁的必填项目。");
       }
       var parsed = [];
@@ -847,7 +885,7 @@
       });
       var count = state.documents.length + 1;
       var no = (documentType === "inbound" ? "RK" : "CK") + "-OFF-" + String(count).padStart(4, "0");
-      var purpose = documentType === "inbound" ? "采购入库" : purposeInput.value.trim();
+      var purpose = documentType === "inbound" ? "采购入库" : (purposeInput.value.trim() || "未填写用途（已忽略）");
       var completedDocument = { id: docId, no: no, type: documentType, purpose: purpose, supplier: supplierInput ? supplierInput.value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", at: now(), operator: "离线管理员", items: items };
       state.documents.unshift(completedDocument);
       save();
@@ -960,6 +998,7 @@
       state.products.push(product);
       var returningToInbound = pendingProductLine !== null && page === "inbound";
       if (returningToInbound && draftLines[pendingProductLine]) draftLines[pendingProductLine].product = product.code + " · " + product.name;
+      if (returningToInbound && !draftSupplier.trim() && product.supplier) draftSupplier = product.supplier;
       pendingProductLine = null;
       save();
       render();
