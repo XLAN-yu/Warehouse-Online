@@ -36,7 +36,15 @@
     if (!value.settings) value.settings = { fontScale: 1 };
     if ([1, 1.2, 1.5].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
     if (!Array.isArray(value.undoHistory)) value.undoHistory = [];
-    value.products.forEach(function (product) { product.archived = product.archived === true; });
+    value.products.forEach(function (product) {
+      product.archived = product.archived === true;
+      if (!product.createdAt) {
+        var relatedDates = value.documents.filter(function (doc) {
+          return doc.items.some(function (line) { return line.productId === product.id; });
+        }).map(function (doc) { return doc.at; }).sort();
+        product.createdAt = relatedDates[0] || now();
+      }
+    });
     return value;
   }
 
@@ -78,6 +86,7 @@
         dataReady = true;
         applyFontScale();
         render();
+        save();
       })
       .catch(function (error) {
         var root = document.getElementById("app");
@@ -136,6 +145,7 @@
 
   function fmt(value) { return new Intl.NumberFormat("zh-CN").format(value || 0); }
   function dateTime(value) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)); }
+  function fullDateTime(value) { return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value)); }
   function typeLabel(type) { return type === "inbound" ? "入库" : type === "outbound" ? "出库" : "盘点"; }
   function icon(type) { return type === "inbound" ? "↘" : type === "outbound" ? "↗" : "✓"; }
   function productById(id) { return state.products.find(function (item) { return item.id === id; }); }
@@ -151,6 +161,14 @@
       return item.code.toLowerCase().indexOf(term) >= 0 || item.name.toLowerCase().indexOf(term) >= 0;
     });
     return matches.length === 1 ? matches[0] : undefined;
+  }
+  function lastInboundPrice(productId) {
+    for (var i = 0; i < state.documents.length; i += 1) {
+      if (state.documents[i].type !== "inbound") continue;
+      var line = state.documents[i].items.find(function (item) { return item.productId === productId; });
+      if (line) return Number(line.price || 0);
+    }
+    return null;
   }
   function pageTitle() {
     return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "显示设置", backup: "数据备份" }[page] || "工作台";
@@ -205,6 +223,9 @@
 
   function homeView() {
     var products = activeProducts();
+    var displayDate = new Date();
+    var displayMonth = new Intl.DateTimeFormat("zh-CN", { month: "long" }).format(displayDate);
+    var displayWeekday = new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(displayDate);
     var today = new Date().toISOString().slice(0, 10);
     var todays = state.documents.filter(function (doc) { return doc.at.slice(0, 10) === today; });
     var inQty = sumQty(todays, "inbound");
@@ -212,7 +233,7 @@
     var low = products.filter(function (p) { return p.stock <= p.min; });
     var value = products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
     return '<div class="stack">' +
-      '<button class="hero" onclick="Warehouse.showGuide()"><div><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></div><div class="hero-badge"><b>' + new Date().getDate() + '</b><small>' + esc(new Intl.DateTimeFormat("zh-CN", { month: "long", weekday: "short" }).format(new Date())) + '</small></div></button>' +
+      '<button class="hero" onclick="Warehouse.showGuide()"><div><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></div><div class="hero-badge"><span>今天</span><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth + " · " + displayWeekday) + '</strong><small>' + displayDate.getFullYear() + '</small></div></button>' +
       '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
       '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
@@ -234,9 +255,37 @@
   }
 
   function inventoryTable(products, editable) {
-    return '<div class="table ' + (editable ? "product-admin-table" : "") + '"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>平均成本</span><span>库存金额</span>' + (editable ? '<span>操作</span>' : "") + '</div>' + products.map(function (p) {
-      return '<div class="trow"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · " + p.supplier) + '</small></div></div><div><span class="status">' + esc(p.status) + '</span></div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div>' + money(p.avg * p.stock) + '</div>' + (editable ? '<div><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div>' : "") + '</div>';
+    if (editable) return productsTable(products);
+    return '<div class="table inventory-table"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>平均成本</span><span>库存金额</span></div>' + products.map(function (p) {
+      return '<div class="inventory-item"><div class="trow inventory-summary" role="button" tabindex="0" aria-expanded="false" aria-controls="history-' + esc(p.id) + '" onclick="Warehouse.toggleInventory(\'' + esc(p.id) + '\',this)" onkeydown="Warehouse.inventoryKey(event,\'' + esc(p.id) + '\',this)"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · 点击展开全周期记录") + '</small></div></div><div><span class="status">' + esc(p.status) + '</span></div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div class="inventory-value"><span>' + money(p.avg * p.stock) + '</span><b>⌄</b></div></div><div id="history-' + esc(p.id) + '" class="inventory-history" hidden>' + inventoryHistory(p) + '</div></div>';
     }).join("") + '</div>';
+  }
+
+  function productsTable(products) {
+    return '<div class="table product-master-table"><div class="thead"><span>商品编号</span><span>商品名称</span><span>默认供应商</span><span>状态</span><span>操作</span></div>' + products.map(function (p) {
+      return '<div class="trow"><div class="master-code"><strong>' + esc(p.code) + '</strong></div><div class="master-name"><strong>' + esc(p.name) + '</strong><small>单位：' + esc(p.unit) + '</small></div><div class="master-supplier">' + esc(p.supplier || "未设置供应商") + '</div><div><span class="status">' + esc(p.status) + '</span></div><div><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div></div>';
+    }).join("") + '</div>';
+  }
+
+  function inventoryHistory(product) {
+    var docs = state.documents.filter(function (doc) {
+      return doc.items.some(function (line) { return line.productId === product.id; });
+    }).slice().sort(function (a, b) { return new Date(a.at) - new Date(b.at); });
+    var inboundCount = docs.filter(function (doc) { return doc.type === "inbound"; }).length;
+    var outboundCount = docs.filter(function (doc) { return doc.type === "outbound"; }).length;
+    var events = '<article class="lifecycle-event lifecycle-created"><span class="lifecycle-icon">建</span><div><strong>商品建库</strong><small>' + esc(fullDateTime(product.createdAt)) + '</small><p>建立商品资料 · 编号 ' + esc(product.code) + '</p></div><b>起点</b></article>';
+    events += docs.map(function (doc) {
+      var line = doc.items.find(function (item) { return item.productId === product.id; });
+      var isInbound = doc.type === "inbound";
+      var isOutbound = doc.type === "outbound";
+      var signedQuantity = isInbound ? "+" + line.quantity : isOutbound ? "−" + line.quantity : ((line.quantity > 0 ? "+" : "") + line.quantity);
+      var unitPrice = isInbound ? line.price : line.cost;
+      var priceLabel = isInbound ? "入库单价" : isOutbound ? "当时出库成本" : "盘点时成本";
+      var detail = isInbound ? (doc.supplier || "未填写供应商") + (doc.ref ? " · 单号 " + doc.ref : "") : doc.purpose;
+      var stockChange = Number.isFinite(Number(line.before)) && Number.isFinite(Number(line.after)) ? ("库存 " + line.before + " → " + line.after + product.unit) : "";
+      return '<article class="lifecycle-event ' + doc.type + '"><span class="lifecycle-icon">' + icon(doc.type) + '</span><div><strong>' + esc(typeLabel(doc.type) + " · " + doc.no) + '</strong><small>' + esc(fullDateTime(doc.at) + " · " + doc.operator) + '</small><p>' + esc(detail) + (stockChange ? " · " + esc(stockChange) : "") + '</p></div><div class="lifecycle-amount"><b>' + esc(signedQuantity + product.unit) + '</b><small>' + esc(priceLabel) + ' ' + money(unitPrice) + '</small></div></article>';
+    }).join("");
+    return '<div class="history-head"><div><strong>全周期记录</strong><small>建库至今的入库、出库与盘点明细</small></div><div><span>入库 ' + inboundCount + ' 次</span><span>出库 ' + outboundCount + ' 次</span><span>当前 ' + product.stock + esc(product.unit) + '</span></div></div><div class="lifecycle">' + events + '</div>';
   }
 
   function collectDraftLines() {
@@ -336,13 +385,14 @@
     var node = document.createElement("div");
     node.className = "success" + (typeof message === "object" ? " success-card" : "");
     if (typeof message === "object") {
-      node.innerHTML = '<span class="success-check">✓</span><div class="success-main"><strong>' + esc(message.title) + '</strong><small>' + esc(message.no) + '</small><p>' + esc(message.products) + '</p><div class="success-meta"><b>' + esc(message.quantity) + '</b><span>' + esc(message.detail) + '</span></div></div>';
+      node.innerHTML = '<span class="success-check">✓</span><div class="success-main"><strong>' + esc(message.title) + '</strong><small>' + esc(message.no) + '</small><p>' + esc(message.products) + '</p><div class="success-meta"><b>' + esc(message.quantity) + '</b><span>' + esc(message.detail) + '</span></div></div><button class="success-close" type="button" aria-label="关闭操作资料卡" onclick="Warehouse.closeToast(this)">×</button>';
     } else {
       node.textContent = "✓ " + message;
     }
     document.body.appendChild(node);
-    toastTimer = setTimeout(function () { node.classList.add("hide"); }, 3000);
-    toastRemoveTimer = setTimeout(function () { node.remove(); }, 3600);
+    var duration = typeof message === "object" ? 10000 : 3000;
+    toastTimer = setTimeout(function () { node.classList.add("hide"); }, duration);
+    toastRemoveTimer = setTimeout(function () { node.remove(); }, duration + 600);
   }
 
   function errorAt(id, message) {
@@ -384,6 +434,14 @@
     showGuide: function () {
       document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card guide-card"><p class="eyebrow">仓储台使用方法</p><h2>先建商品，再做出入库</h2><div class="guide-steps"><article><b>1</b><div><h3>建立商品资料</h3><p>第一次收到某种商品时，先填写品名、编号、单位、最低库存和默认供应商。</p></div></article><article><b>2</b><div><h3>登记商品入库</h3><p>选择商品，填写数量、实际单价和本次供应商，系统自动增加库存并计算移动平均价。</p></div></article><article><b>3</b><div><h3>登记商品出库</h3><p>选择商品并填写数量和用途；超过现有库存时，系统会直接禁止提交。</p></div></article></div><div class="modal-actions"><button class="primary" onclick="Warehouse.closeModal()">知道了</button></div></div></div>';
     },
+    closeToast: function (button) {
+      var node = button && button.closest ? button.closest(".success") : document.querySelector(".success");
+      if (!node) return;
+      clearTimeout(toastTimer);
+      clearTimeout(toastRemoveTimer);
+      node.classList.add("hide");
+      toastRemoveTimer = setTimeout(function () { node.remove(); }, 250);
+    },
     setFontScale: function (value) {
       if (Number(state.settings.fontScale) === Number(value)) return;
       recordUndo("调整字体为 " + Math.round(Number(value) * 100) + "%");
@@ -395,10 +453,15 @@
     },
     nextOnEnter: function (event) {
       if (event.key !== "Enter") return;
-      var fields = Array.prototype.slice.call(document.querySelectorAll(".form input:not([disabled]), .modal-card input:not([disabled]), .modal-card select:not([disabled])"));
+      event.preventDefault();
+      var inDocumentForm = event.target.closest && event.target.closest(".form");
+      var selector = inDocumentForm ? ".form input:not([disabled]), .form select:not([disabled])" : ".modal-card input:not([disabled]), .modal-card select:not([disabled])";
+      var fields = Array.prototype.slice.call(document.querySelectorAll(selector));
       var index = fields.indexOf(event.target);
       if (index >= 0 && fields[index + 1]) {
         setTimeout(function () { fields[index + 1].focus(); }, 0);
+      } else if (index >= 0 && inDocumentForm && (page === "inbound" || page === "outbound")) {
+        window.Warehouse.submitDocument();
       }
     },
     undoLast: function () {
@@ -421,6 +484,21 @@
       var term = String(query || "").toLowerCase();
       var filtered = activeProducts().filter(function (p) { return (p.code + " " + p.name + " " + p.supplier).toLowerCase().indexOf(term) >= 0; });
       document.getElementById("inventoryTable").innerHTML = inventoryTable(filtered, false);
+    },
+    toggleInventory: function (id, trigger) {
+      var detail = document.getElementById("history-" + id);
+      if (!detail) return;
+      var willOpen = detail.hidden;
+      detail.hidden = !willOpen;
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        trigger.classList.toggle("open", willOpen);
+      }
+    },
+    inventoryKey: function (event, id, trigger) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      window.Warehouse.toggleInventory(id, trigger);
     },
     removeProduct: function (id) {
       var product = productById(id);
@@ -473,7 +551,13 @@
     syncLine: function (input) {
       var p = productFromText(input.value);
       if (p) input.value = p.code + " · " + p.name;
-      input.closest(".line").querySelector(".stock").textContent = p ? p.stock + p.unit : "—";
+      var row = input.closest(".line");
+      row.querySelector(".stock").textContent = p ? p.stock + p.unit : "—";
+      var priceInput = row.querySelector("[data-field=price]");
+      if (p && documentType === "inbound" && priceInput) {
+        var previousPrice = lastInboundPrice(p.id);
+        if (previousPrice !== null) priceInput.value = (previousPrice / 100).toFixed(2);
+      }
     },
     submitDocument: function () {
       collectDraftLines();
@@ -659,7 +743,7 @@
         flashFields([codeInput]);
         return errorAt("productError", "商品编号 " + code + " 已存在。");
       }
-      var product = { id: uid("p"), code: code, name: name, unit: unit, status: document.getElementById("newStatus").value, min: min, stock: 0, avg: 0, supplier: document.getElementById("newSupplier").value.trim() };
+      var product = { id: uid("p"), code: code, name: name, unit: unit, status: document.getElementById("newStatus").value, min: min, stock: 0, avg: 0, supplier: document.getElementById("newSupplier").value.trim(), createdAt: now() };
       recordUndo("新增商品：" + name);
       state.products.push(product);
       var returningToInbound = pendingProductLine !== null && page === "inbound";
