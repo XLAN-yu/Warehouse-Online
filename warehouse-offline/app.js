@@ -230,7 +230,7 @@
 
   function inventoryView() {
     var products = activeProducts();
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">实时库存</p><h1>查看库存</h1><p>低于或等于最低库存时自动提醒。</p></div><button class="export" onclick="Warehouse.exportExcel()">⇩ 导出 Excel</button></section><section class="panel scroll"><div class="toolbar"><input id="inventorySearch" class="search" placeholder="搜索品名或编号" oninput="Warehouse.filterInventory(this.value)"><span class="result">' + products.length + ' 种商品</span></div><div id="inventoryTable">' + inventoryTable(products, false) + '</div></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">实时库存</p><h1>查看库存</h1><p>低于或等于最低库存时自动提醒。</p></div><button class="blue-action" onclick="Warehouse.exportExcel()">⇩ 导出 Excel</button></section><section class="panel scroll"><div class="toolbar"><input id="inventorySearch" class="search" placeholder="搜索品名或编号" oninput="Warehouse.filterInventory(this.value)"><span class="result">' + products.length + ' 种商品</span></div><div id="inventoryTable">' + inventoryTable(products, false) + '</div></section></div>';
   }
 
   function inventoryTable(products, editable) {
@@ -283,7 +283,7 @@
     var outQty = sumQty(docs, "outbound");
     var inValue = valueOf(inbound, true);
     var outValue = valueOf(outbound, false);
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">离线库存汇总</p><h1>库存报表</h1><p>当前查看：' + reportPeriodLabel() + ' · ' + reportFilterValue() + '</p></div><button class="export" onclick="Warehouse.exportExcel(true)">⇩ 导出当前报表</button></section><div class="report-controls"><div class="tabs"><button class="' + (period === "day" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'day\')">日报</button><button class="' + (period === "month" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'month\')">月报</button><button class="' + (period === "year" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'year\')">年报</button></div>' + reportDatePicker() + '</div><section class="report-cards"><article><span>入库数量</span><strong>' + inQty + ' 件</strong><p>' + inbound.length + ' 张单 · ' + money(inValue) + '</p></article><article><span>出库数量</span><strong>' + outQty + ' 件</strong><p>' + outbound.length + ' 张单 · ' + money(outValue) + '</p></article><article><span>盘点调整</span><strong>' + stocktakes.length + ' 次</strong><p>' + stocktakes.reduce(function (s, d) { return s + d.items.length; }, 0) + ' 项盘盈盘亏</p></article></section><section class="panel"><div class="panel-head"><h2>' + reportPeriodLabel() + '单据明细</h2><span class="status">' + docs.length + ' 张</span></div>' + activityRows(docs) + '</section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">离线库存汇总</p><h1>库存报表</h1><p>当前查看：' + reportPeriodLabel() + ' · ' + reportFilterValue() + '</p></div><button class="blue-action" onclick="Warehouse.exportExcel(true)">⇩ 导出当前报表</button></section><div class="report-controls"><div class="tabs"><button class="' + (period === "day" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'day\')">日报</button><button class="' + (period === "month" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'month\')">月报</button><button class="' + (period === "year" ? "active" : "") + '" onclick="Warehouse.setPeriod(\'year\')">年报</button></div>' + reportDatePicker() + '</div><section class="report-cards"><article><span>入库数量</span><strong>' + inQty + ' 件</strong><p>' + inbound.length + ' 张单 · ' + money(inValue) + '</p></article><article><span>出库数量</span><strong>' + outQty + ' 件</strong><p>' + outbound.length + ' 张单 · ' + money(outValue) + '</p></article><article><span>盘点调整</span><strong>' + stocktakes.length + ' 次</strong><p>' + stocktakes.reduce(function (s, d) { return s + d.items.length; }, 0) + ' 项盘盈盘亏</p></article></section><section class="panel"><div class="panel-head"><h2>' + reportPeriodLabel() + '单据明细</h2><span class="status">' + docs.length + ' 张</span></div>' + activityRows(docs) + '</section></div>';
   }
 
   function productsView() {
@@ -296,7 +296,7 @@
   }
 
   function backupView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">本机数据安全</p><h1>数据备份</h1><p>系统每周自动备份一次，并删除超过 30 天的旧备份。</p></div></section><section class="backup-grid"><article class="backup-card"><h2>立即备份到文件夹</h2><p>完整备份将写入 data\\backups，可直接复制到其他磁盘保存。</p><button class="primary" onclick="Warehouse.exportBackup()">立即备份</button></article><article class="backup-card"><h2>从备份恢复</h2><p>选择 data\\backups 中的仓储台 JSON 备份，用其替换当前数据。</p><button class="secondary" onclick="document.getElementById(\'restoreFile\').click()">选择文件</button><input hidden id="restoreFile" type="file" accept=".json,application/json" onchange="Warehouse.restoreBackup(this.files[0])"></article><article class="backup-card"><h2>全量 Excel 导出</h2><p>生成库存与流水两个工作表，可直接使用 Microsoft Excel 打开。</p><button class="export" onclick="Warehouse.exportExcel()">导出 Excel</button></article><article class="backup-card"><h2>清空全部数据</h2><p>清除商品、库存和全部流水，恢复为空白系统。操作前请先备份。</p><button class="secondary" onclick="Warehouse.reset()">清空数据</button></article></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">本机数据安全</p><h1>数据备份</h1><p>系统每周自动备份一次，并删除超过 30 天的旧备份。</p></div></section><section class="backup-grid"><article class="backup-card"><h2>立即备份到文件夹</h2><p>完整备份将写入 data\\backups，可直接复制到其他磁盘保存。</p><button class="blue-action" onclick="Warehouse.exportBackup()">立即备份</button></article><article class="backup-card"><h2>从备份恢复</h2><p>选择 data\\backups 中的仓储台 JSON 备份，用其替换当前数据。</p><button class="blue-action" onclick="document.getElementById(\'restoreFile\').click()">选择文件</button><input hidden id="restoreFile" type="file" accept=".json,application/json" onchange="Warehouse.restoreBackup(this.files[0])"></article><article class="backup-card"><h2>全量 Excel 导出</h2><p>生成库存与流水两个工作表，可直接使用 Microsoft Excel 打开。</p><button class="blue-action" onclick="Warehouse.exportExcel()">导出 Excel</button></article><article class="backup-card"><h2>清空全部数据</h2><p>清除商品、库存和全部流水，恢复为空白系统。操作前请先备份。</p><button class="blue-action" onclick="Warehouse.reset()">清空数据</button></article></section></div>';
   }
 
   function sumQty(docs, type) {
@@ -317,7 +317,7 @@
     var label = period === "day" ? "查看日期" : period === "month" ? "查看月份" : "查看年份";
     var type = period === "day" ? "date" : period === "month" ? "month" : "number";
     var limits = period === "year" ? ' min="1900" max="2100" step="1"' : "";
-    return '<label class="report-date"><span>' + label + '</span><input type="' + type + '" value="' + reportFilterValue() + '"' + limits + ' onchange="Warehouse.setReportDate(this.value)"></label>';
+    return '<label class="report-date"><span>' + label + '</span><input type="' + type + '" value="' + reportFilterValue() + '"' + limits + ' aria-label="' + label + '" onclick="Warehouse.openPicker(this)" onchange="Warehouse.setReportDate(this.value)"></label>';
   }
   function filteredDocs() {
     return state.documents.filter(function (doc) {
@@ -597,6 +597,13 @@
       toast("盘点完成：" + no);
     },
     setPeriod: function (value) { period = value; render(); },
+    openPicker: function (input) {
+      if (!input) return;
+      input.focus();
+      if (typeof input.showPicker === "function") {
+        try { input.showPicker(); } catch (error) { /* Older browsers keep the focused native input. */ }
+      }
+    },
     setReportDate: function (value) {
       if (!value) return;
       var parts = String(value).split("-").map(Number);
