@@ -219,7 +219,7 @@
     if (remaining > 0) total += remaining * fallbackCost;
     return total;
   }
-  function fifoUnitCost(product, quantity) {
+  function fifoLayers(product) {
     var layers = [];
     state.documents.slice().sort(function (a, b) { return new Date(a.at) - new Date(b.at); }).forEach(function (doc) {
       var line = doc.items.find(function (item) { return item.productId === product.id; });
@@ -232,6 +232,10 @@
     var layerQuantity = layers.reduce(function (sum, layer) { return sum + layer.quantity; }, 0);
     if (layerQuantity < product.stock) layers.push({ quantity: product.stock - layerQuantity, cost: product.avg });
     else if (layerQuantity > product.stock) consumeFifoLayers(layers, layerQuantity - product.stock, product.avg);
+    return layers;
+  }
+  function fifoUnitCost(product, quantity) {
+    var layers = fifoLayers(product);
     return quantity ? Math.round(consumeFifoLayers(layers, quantity, product.avg) / quantity) : product.avg;
   }
   function outboundUnitCost(product, quantity) {
@@ -242,6 +246,23 @@
     }
     if (method === "fifo") return fifoUnitCost(product, quantity);
     return product.avg;
+  }
+  function inventoryUnitCost(product) {
+    if (!product.stock) return 0;
+    var method = state.settings.costMethod || "weighted";
+    if (method === "lastInbound") {
+      var recent = lastInboundPrice(product.id);
+      return recent === null ? product.avg : recent;
+    }
+    if (method === "fifo") {
+      var layers = fifoLayers(product);
+      var total = layers.reduce(function (sum, layer) { return sum + layer.quantity * layer.cost; }, 0);
+      return Math.round(total / product.stock);
+    }
+    return product.avg;
+  }
+  function inventoryValue(product) {
+    return inventoryUnitCost(product) * product.stock;
   }
   function pageTitle() {
     return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", "product-history": "商品全周期", search: "全局搜索", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "设置", backup: "数据备份" }[page] || "工作台";
@@ -333,11 +354,11 @@
     var inQty = sumQty(todays, "inbound");
     var outQty = sumQty(todays, "outbound");
     var low = products.filter(function (p) { return p.stock <= p.min; });
-    var value = products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
+    var value = products.reduce(function (sum, p) { return sum + inventoryValue(p); }, 0);
     return '<div class="stack">' +
       '<section class="hero" onclick="Warehouse.showGuide()" title="点击深绿色边缘查看使用教程" aria-label="点击色块边缘查看使用教程"><div class="hero-badge" onclick="event.stopPropagation()"><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth) + '</strong><span>' + esc(displayWeekday) + '</span><small>' + displayDate.getFullYear() + '</small></div><button class="hero-search" onclick="event.stopPropagation();Warehouse.go(\'search\')" aria-label="打开全局搜索"><span>⌕</span><strong>全局搜索</strong><small>供应商 · 商品编号 · 品名 · 拼音首字母</small></button></section>' +
       '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
-      '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
+      '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>' + esc(costMethodLabel(state.settings.costMethod)) + '</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
     '</div>';
   }
@@ -358,8 +379,8 @@
 
   function inventoryTable(products, editable) {
     if (editable) return productsTable(products);
-    return '<div class="table inventory-table"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>平均成本</span><span>库存金额</span></div>' + products.map(function (p) {
-      return '<div class="inventory-item"><div class="trow inventory-summary" role="link" tabindex="0" onclick="Warehouse.openProductHistory(\'' + esc(p.id) + '\')" onkeydown="Warehouse.openProductKey(event,\'' + esc(p.id) + '\')"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · 点击进入全周期记录") + '</small></div></div><div>' + statusSelect(p) + '</div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div class="inventory-value"><span>' + money(p.avg * p.stock) + '</span><b>→</b></div></div></div>';
+    return '<div class="table inventory-table"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>计价单价</span><span>库存金额</span></div>' + products.map(function (p) {
+      return '<div class="inventory-item"><div class="trow inventory-summary" role="link" tabindex="0" onclick="Warehouse.openProductHistory(\'' + esc(p.id) + '\')" onkeydown="Warehouse.openProductKey(event,\'' + esc(p.id) + '\')"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · 点击进入全周期记录") + '</small></div></div><div>' + statusSelect(p) + '</div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div><strong>' + money(inventoryUnitCost(p)) + '</strong><small class="cost-basis">' + esc(costMethodLabel(state.settings.costMethod)) + '</small></div><div class="inventory-value"><span>' + money(inventoryValue(p)) + '</span><b>→</b></div></div></div>';
     }).join("") + '</div>';
   }
 
@@ -393,7 +414,7 @@
       var stockChange = record.before == null ? "—" : record.before + " → " + record.after + product.unit;
       return '<div class="history-row"><div>' + esc(fullDateTime(record.at)) + '</div><div><span class="history-type ' + esc(record.type) + '">' + esc(record.typeText) + '</span></div><div><strong>' + esc(record.no) + '</strong></div><div class="history-qty">' + esc(quantity) + '</div><div>' + (record.unitPrice == null ? "—" : money(record.unitPrice)) + '<small>' + esc(record.priceLabel) + '</small></div><div>' + esc(stockChange) + '</div><div>' + esc(record.detail) + '</div><div>' + esc(record.operator) + '</div></div>';
     }).join("");
-    return '<div class="stack"><section class="heading history-heading"><div><button class="back-link" onclick="Warehouse.go(\'inventory\')">← 返回库存</button><p class="eyebrow">商品全周期</p><h1>' + esc(product.name) + '</h1><p>' + esc(product.code + " · " + (product.supplier || "未设置供应商")) + '</p></div><button class="blue-action" onclick="Warehouse.exportProductHistory(\'' + esc(product.id) + '\')">⇩ 导出 Excel</button></section><section class="history-summary"><article><span>当前库存</span><strong>' + product.stock + '<small>' + esc(product.unit) + '</small></strong></article><article><span>移动平均价</span><strong>' + money(product.avg) + '</strong></article><article><span>供应状态</span>' + statusSelect(product) + '</article><article><span>建库时间</span><strong class="summary-date">' + esc(fullDateTime(product.createdAt)) + '</strong></article></section><section class="panel scroll"><div class="history-table"><div class="history-head-row"><span>时间</span><span>类型</span><span>单号</span><span>数量</span><span>单价/成本</span><span>库存变化</span><span>供应商/用途</span><span>操作人</span></div>' + rows + '</div></section></div>';
+    return '<div class="stack"><section class="heading history-heading"><div><button class="back-link" onclick="Warehouse.go(\'inventory\')">← 返回库存</button><p class="eyebrow">商品全周期</p><h1>' + esc(product.name) + '</h1><p>' + esc(product.code + " · " + (product.supplier || "未设置供应商")) + '</p></div><button class="blue-action" onclick="Warehouse.exportProductHistory(\'' + esc(product.id) + '\')">⇩ 导出 Excel</button></section><section class="history-summary"><article><span>当前库存</span><strong>' + product.stock + '<small>' + esc(product.unit) + '</small></strong></article><article><span>当前计价单价 · ' + esc(costMethodLabel(state.settings.costMethod)) + '</span><strong>' + money(inventoryUnitCost(product)) + '</strong></article><article><span>供应状态</span>' + statusSelect(product) + '</article><article><span>建库时间</span><strong class="summary-date">' + esc(fullDateTime(product.createdAt)) + '</strong></article></section><section class="panel scroll"><div class="history-table"><div class="history-head-row"><span>时间</span><span>类型</span><span>单号</span><span>数量</span><span>单价/成本</span><span>库存变化</span><span>供应商/用途</span><span>操作人</span></div>' + rows + '</div></section></div>';
   }
 
   function globalSuggestions() {
@@ -415,8 +436,8 @@
       return productSearchText(product).indexOf(term) >= 0;
     });
     if (!matches.length) return '<div class="search-empty"><span>×</span><strong>没有找到匹配商品</strong><p>可尝试输入更短的品名、编号或供应商名称。</p></div>';
-    return '<div class="search-result-list"><div class="search-result-head"><span>商品名称</span><span>商品编号</span><span>默认供应商</span><span>当前库存</span><span>平均价格</span><span>状态</span><span>操作</span></div>' + matches.map(function (product) {
-      return '<article class="search-result-card"><div class="search-result-main" data-label="商品名称"><span class="search-avatar">' + esc(product.name.slice(0, 1)) + '</span><strong>' + esc(product.name) + '</strong></div><div class="search-result-cell search-code" data-label="商品编号"><b>' + esc(product.code) + '</b></div><div class="search-result-cell search-supplier" data-label="默认供应商"><b>' + esc(product.supplier || "未设置供应商") + '</b></div><div class="search-result-cell" data-label="当前库存"><b>' + product.stock + esc(product.unit) + '</b></div><div class="search-result-cell" data-label="平均价格"><b>' + money(product.avg) + '</b></div><div class="search-result-cell" data-label="状态"><b>' + esc(product.status) + '</b></div><div class="search-result-actions"><button class="primary" onclick="Warehouse.startProductDocument(\'inbound\',\'' + esc(product.id) + '\')">商品入库</button><button class="secondary" onclick="Warehouse.startProductDocument(\'outbound\',\'' + esc(product.id) + '\')">商品出库</button><button class="blue-action compact" onclick="Warehouse.openProductHistory(\'' + esc(product.id) + '\')">查看全周期</button></div></article>';
+    return '<div class="search-result-list"><div class="search-result-head"><span>商品名称</span><span>商品编号</span><span>默认供应商</span><span>当前库存</span><span>计价单价</span><span>状态</span><span>操作</span></div>' + matches.map(function (product) {
+      return '<article class="search-result-card"><div class="search-result-main" data-label="商品名称"><span class="search-avatar">' + esc(product.name.slice(0, 1)) + '</span><strong>' + esc(product.name) + '</strong></div><div class="search-result-cell search-code" data-label="商品编号"><b>' + esc(product.code) + '</b></div><div class="search-result-cell search-supplier" data-label="默认供应商"><b>' + esc(product.supplier || "未设置供应商") + '</b></div><div class="search-result-cell" data-label="当前库存"><b>' + product.stock + esc(product.unit) + '</b></div><div class="search-result-cell" data-label="计价单价"><b>' + money(inventoryUnitCost(product)) + '</b><small class="cost-basis">' + esc(costMethodLabel(state.settings.costMethod)) + '</small></div><div class="search-result-cell" data-label="状态"><b>' + esc(product.status) + '</b></div><div class="search-result-actions"><button class="primary" onclick="Warehouse.startProductDocument(\'inbound\',\'' + esc(product.id) + '\')">商品入库</button><button class="secondary" onclick="Warehouse.startProductDocument(\'outbound\',\'' + esc(product.id) + '\')">商品出库</button><button class="blue-action compact" onclick="Warehouse.openProductHistory(\'' + esc(product.id) + '\')">查看全周期</button></div></article>';
     }).join("") + '</div>';
   }
 
@@ -955,7 +976,7 @@
         no: no,
         products: parsed.map(function (entry) { return entry.product.name; }).join("、"),
         quantity: "共 " + parsed.reduce(function (sum, entry) { return sum + entry.quantity; }, 0) + " 件",
-        detail: documentType === "inbound" ? (completedDocument.supplier || "未填写供应商") : completedDocument.purpose
+        detail: documentType === "inbound" ? (completedDocument.supplier || "未填写供应商") : (completedDocument.purpose + " · " + costMethodLabel(completedDocument.costMethod) + " · 出库成本 " + money(items.reduce(function (sum, line) { return sum + Math.abs(line.quantity) * line.cost; }, 0)))
       });
     },
     stockDiff: function (input, book, unit) {
@@ -1100,12 +1121,12 @@
     },
     exportExcel: function (currentPeriod) {
       var docs = currentPeriod ? filteredDocs() : state.documents;
-      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "移动平均价", "库存金额", "建库时间"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, p.avg / 100, p.avg * p.stock / 100, new Date(p.createdAt)]; }));
+      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "计价方式", "计价单价", "库存金额", "建库时间"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, costMethodLabel(state.settings.costMethod), inventoryUnitCost(p) / 100, inventoryValue(p) / 100, new Date(p.createdAt)]; }));
       var movements = [["时间", "单号", "类型", "商品编号", "品名", "数量", "单位", "供应商/用途", "单价/成本", "金额", "操作人"]];
       docs.forEach(function (doc) { doc.items.forEach(function (line) { var p = productById(line.productId) || { code: "", name: "未知商品", unit: "" }; var unit = doc.type === "inbound" ? line.price : line.cost; var detail = doc.type === "inbound" ? doc.supplier : doc.purpose; movements.push([new Date(doc.at), doc.no, typeLabel(doc.type), p.code, p.name, doc.type === "outbound" ? -Math.abs(line.quantity) : line.quantity, p.unit, detail, unit / 100, Math.abs(line.quantity) * unit / 100, doc.operator]); }); });
       var exportName = currentPeriod ? ("仓储台" + reportPeriodLabel() + "-" + reportFilterValue() + ".xlsx") : ("仓储台离线数据-" + new Date().toISOString().slice(0, 10) + ".xlsx");
       var workbook = createXlsx([
-        { name: "库存", rows: inventory, formats: ["text", "text", "text", "integer", "integer", "text", "text", "currency", "currency", "date"] },
+        { name: "库存", rows: inventory, formats: ["text", "text", "text", "integer", "integer", "text", "text", "text", "currency", "currency", "date"] },
         { name: "流水", rows: movements, formats: ["date", "text", "text", "text", "text", "integer", "text", "text", "currency", "currency", "text"] }
       ]);
       download(exportName, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -1114,7 +1135,7 @@
     exportProductHistory: function (id) {
       var product = productById(id);
       if (!product) return;
-      var overview = [["项目", "内容"], ["商品编号", product.code], ["商品名称", product.name], ["默认供应商", product.supplier], ["状态", product.status], ["单位", product.unit], ["当前库存", product.stock], ["移动平均价", product.avg / 100], ["建库时间", new Date(product.createdAt)]];
+      var overview = [["项目", "内容"], ["商品编号", product.code], ["商品名称", product.name], ["默认供应商", product.supplier], ["状态", product.status], ["单位", product.unit], ["当前库存", product.stock], ["当前计价方式", costMethodLabel(state.settings.costMethod)], ["当前计价单价", inventoryUnitCost(product) / 100], ["当前库存金额", inventoryValue(product) / 100], ["建库时间", new Date(product.createdAt)]];
       var history = [["时间", "类型", "单号", "数量", "单位", "单价/成本", "价格说明", "变动前库存", "变动后库存", "供应商/用途", "操作人"]];
       productLifecycle(product).forEach(function (record) { history.push([new Date(record.at), record.typeText, record.no, record.quantity, product.unit, record.unitPrice == null ? null : record.unitPrice / 100, record.priceLabel, record.before, record.after, record.detail, record.operator]); });
       var workbook = createXlsx([
