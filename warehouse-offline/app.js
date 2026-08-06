@@ -270,7 +270,8 @@
 
   var productStatuses = ["正常供货", "补货已下单", "价格有变动", "启用替代供货", "暂停采购"];
   function statusSelect(product) {
-    return '<select class="status-select" aria-label="修改' + esc(product.name) + '的状态" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" onchange="Warehouse.updateProductStatus(\'' + esc(product.id) + '\',this.value)">' + productStatuses.map(function (status) { return '<option' + (product.status === status ? " selected" : "") + '>' + esc(status) + '</option>'; }).join("") + '</select>';
+    var tone = Math.max(0, productStatuses.indexOf(product.status));
+    return '<select class="status-select status-tone-' + tone + '" aria-label="修改' + esc(product.name) + '的状态" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" onchange="Warehouse.updateProductStatus(\'' + esc(product.id) + '\',this.value)">' + productStatuses.map(function (status, index) { return '<option class="status-tone-' + index + '"' + (product.status === status ? " selected" : "") + '>' + esc(status) + '</option>'; }).join("") + '</select>';
   }
 
   function navButton(id, label, glyph) {
