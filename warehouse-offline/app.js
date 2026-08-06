@@ -35,14 +35,15 @@
       version: 1,
       products: [],
       documents: [],
-      settings: { fontScale: 1 },
+      settings: { fontScale: 1, costMethod: "weighted" },
       undoHistory: []
     };
   }
 
   function normalizeState(value) {
-    if (!value.settings) value.settings = { fontScale: 1 };
+    if (!value.settings) value.settings = { fontScale: 1, costMethod: "weighted" };
     if ([1, 1.2, 1.5].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
+    if (["weighted", "fifo", "lastInbound"].indexOf(value.settings.costMethod) < 0) value.settings.costMethod = "weighted";
     if (!Array.isArray(value.undoHistory)) value.undoHistory = [];
     value.products.forEach(function (product) {
       product.archived = product.archived === true;
@@ -201,8 +202,49 @@
     }
     return null;
   }
+  function costMethodLabel(method) {
+    return { weighted: "移动加权平均", fifo: "先进先出", lastInbound: "最近入库价" }[method] || "移动加权平均";
+  }
+  function consumeFifoLayers(layers, quantity, fallbackCost) {
+    var remaining = quantity;
+    var total = 0;
+    while (remaining > 0 && layers.length) {
+      var layer = layers[0];
+      var used = Math.min(remaining, layer.quantity);
+      total += used * layer.cost;
+      layer.quantity -= used;
+      remaining -= used;
+      if (layer.quantity <= 0) layers.shift();
+    }
+    if (remaining > 0) total += remaining * fallbackCost;
+    return total;
+  }
+  function fifoUnitCost(product, quantity) {
+    var layers = [];
+    state.documents.slice().sort(function (a, b) { return new Date(a.at) - new Date(b.at); }).forEach(function (doc) {
+      var line = doc.items.find(function (item) { return item.productId === product.id; });
+      if (!line) return;
+      if (doc.type === "inbound") layers.push({ quantity: Math.abs(line.quantity), cost: Number(line.price || line.cost || product.avg || 0) });
+      else if (doc.type === "outbound") consumeFifoLayers(layers, Math.abs(line.quantity), Number(line.cost || product.avg || 0));
+      else if (line.quantity > 0) layers.push({ quantity: line.quantity, cost: Number(line.cost || product.avg || 0) });
+      else if (line.quantity < 0) consumeFifoLayers(layers, Math.abs(line.quantity), Number(line.cost || product.avg || 0));
+    });
+    var layerQuantity = layers.reduce(function (sum, layer) { return sum + layer.quantity; }, 0);
+    if (layerQuantity < product.stock) layers.push({ quantity: product.stock - layerQuantity, cost: product.avg });
+    else if (layerQuantity > product.stock) consumeFifoLayers(layers, layerQuantity - product.stock, product.avg);
+    return quantity ? Math.round(consumeFifoLayers(layers, quantity, product.avg) / quantity) : product.avg;
+  }
+  function outboundUnitCost(product, quantity) {
+    var method = state.settings.costMethod || "weighted";
+    if (method === "lastInbound") {
+      var recent = lastInboundPrice(product.id);
+      return recent === null ? product.avg : recent;
+    }
+    if (method === "fifo") return fifoUnitCost(product, quantity);
+    return product.avg;
+  }
   function pageTitle() {
-    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", "product-history": "商品全周期", search: "全局搜索", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "显示设置", backup: "数据备份" }[page] || "工作台";
+    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", "product-history": "商品全周期", search: "全局搜索", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "设置", backup: "数据备份" }[page] || "工作台";
   }
 
   var productStatuses = ["正常供货", "补货已下单", "价格有变动", "启用替代供货", "暂停采购"];
@@ -215,6 +257,9 @@
   }
 
   function enhanceDocumentForm() {
+    Array.prototype.slice.call(document.querySelectorAll(".cost-method")).forEach(function (node) {
+      node.textContent = costMethodLabel(state.settings.costMethod);
+    });
     if (page !== "inbound") return;
     var input = document.getElementById("docSupplier");
     if (!input || !input.parentNode) return;
@@ -248,7 +293,7 @@
             navButton("inventory", "查看库存", "▦") +
             navButton("stocktake", "库存盘点", "✓") +
             navButton("reports", "库存报表", "▤") +
-            navButton("settings", "显示设置", "Aa") +
+            navButton("settings", "设置", "⚙") +
             navButton("backup", "数据备份", "↻") +
           '</nav>' +
           '<div class="side-foot"><i></i>离线模式 · 数据保存到工程包</div>' +
@@ -333,7 +378,7 @@
       var isInbound = doc.type === "inbound";
       var isOutbound = doc.type === "outbound";
       var unitPrice = isInbound ? line.price : line.cost;
-      var priceLabel = isInbound ? "入库单价" : isOutbound ? "当时出库成本" : "盘点时成本";
+      var priceLabel = isInbound ? "入库单价" : isOutbound ? costMethodLabel(doc.costMethod || "weighted") + "出库成本" : "盘点时成本";
       var detail = isInbound ? (doc.supplier || "未填写供应商") + (doc.ref ? " · 单号 " + doc.ref : "") : doc.purpose;
       return { at: doc.at, type: doc.type, typeText: typeLabel(doc.type), no: doc.no, quantity: isOutbound ? -Math.abs(line.quantity) : line.quantity, unitPrice: Number(unitPrice || 0), priceLabel: priceLabel, before: line.before, after: line.after, detail: detail, operator: doc.operator };
     }));
@@ -432,7 +477,8 @@
 
   function settingsView() {
     var current = Number(state.settings.fontScale || 1);
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">阅读与显示</p><h1>全局字体大小</h1><p>选择后文字和按钮同步适应，并随 data 文件夹中的仓库数据保存。</p></div></section><section class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>较大</b><span>文字和按钮同步增大</span><em>120%</em></button><button class="setting-option ' + (current === 1.5 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.5)"><b>特大</b><span>适合远距离查看</span><em>150%</em></button></section><section class="panel settings-note"><h2>提示</h2><p>字号增大后，一屏显示的内容会减少；按钮和输入框会自动适应。</p></section></div>';
+    var method = state.settings.costMethod || "weighted";
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">系统偏好</p><h1>设置</h1><p>显示大小和出库计价方式会保存在本机 data 文件夹。</p></div></section><section class="setting-section"><div class="setting-section-title"><h2>全局字体大小</h2></div><div class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>较大</b><span>文字和按钮同步增大</span><em>120%</em></button><button class="setting-option ' + (current === 1.5 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.5)"><b>特大</b><span>适合远距离查看</span><em>150%</em></button></div></section><section class="setting-section"><div class="setting-section-title"><h2>出库计价方式</h2><p>只影响之后新建的出库单，历史流水不会改变。</p></div><div class="cost-method-grid"><button class="cost-option ' + (method === "weighted" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'weighted\')"><b>移动加权平均</b><span>综合现有库存与每次入库价格，波动较平稳</span><em>常用</em></button><button class="cost-option ' + (method === "fifo" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'fifo\')"><b>先进先出</b><span>优先使用最早批次的入库成本</span><em>FIFO</em></button><button class="cost-option ' + (method === "lastInbound" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'lastInbound\')"><b>最近入库价</b><span>使用该商品最近一次实际入库单价</span><em>最新</em></button></div></section></div>';
   }
 
   function backupView() {
@@ -624,7 +670,7 @@
       if (next === "search") setTimeout(function () { var input = document.getElementById("globalSearchInput"); if (input) input.focus(); }, 0);
     },
     showGuide: function () {
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card guide-card"><p class="eyebrow">仓储台使用方法</p><h2>先建商品，再做出入库</h2><div class="guide-steps"><article><b>1</b><div><h3>建立商品资料</h3><p>第一次收到某种商品时，先填写品名、编号、单位、最低库存和默认供应商。</p></div></article><article><b>2</b><div><h3>登记商品入库</h3><p>选择商品，填写数量、实际单价和本次供应商，系统自动增加库存并计算移动平均价。</p></div></article><article><b>3</b><div><h3>登记商品出库</h3><p>选择商品并填写数量和用途；超过现有库存时，系统会直接禁止提交。</p></div></article></div><div class="modal-actions"><button class="primary" onclick="Warehouse.closeModal()">知道了</button></div></div></div>';
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card guide-card"><p class="eyebrow">仓储台使用方法</p><h2>先建商品，再做出入库</h2><div class="guide-steps"><article><b>1</b><div><h3>建立商品资料</h3><p>第一次收到某种商品时，先填写品名、编号、单位、最低库存和默认供应商。</p></div></article><article><b>2</b><div><h3>登记商品入库</h3><p>选择商品，填写数量、实际单价和本次供应商，系统自动增加库存并计算移动平均价。</p></div></article><article><b>3</b><div><h3>登记商品出库</h3><p>选择商品并填写数量和用途；系统按设置中的计价方式记录成本，且绝不允许负库存。</p></div></article></div><div class="modal-actions"><button class="primary" onclick="Warehouse.closeModal()">知道了</button></div></div></div>';
     },
     closeToast: function (button) {
       var node = button && button.closest ? button.closest(".success") : document.querySelector(".success");
@@ -642,6 +688,14 @@
       save();
       render();
       toast("全局显示大小已调整为 " + Math.round(Number(value) * 100) + "%");
+    },
+    setCostMethod: function (method) {
+      if (["weighted", "fifo", "lastInbound"].indexOf(method) < 0 || state.settings.costMethod === method) return;
+      recordUndo("调整出库计价方式为 " + costMethodLabel(method));
+      state.settings.costMethod = method;
+      save();
+      render();
+      toast("之后的出库将使用：" + costMethodLabel(method));
     },
     nextOnEnter: function (event) {
       if (event.key !== "Enter") return;
@@ -877,16 +931,17 @@
         var p = entry.product;
         var before = p.stock;
         var oldAverage = p.avg;
+        var selectedCost = documentType === "inbound" ? entry.price : outboundUnitCost(p, entry.quantity);
         var after = documentType === "inbound" ? before + entry.quantity : before - entry.quantity;
         if (documentType === "inbound") p.avg = after ? Math.round((before * oldAverage + entry.quantity * entry.price) / after) : 0;
         else if (after === 0) p.avg = 0;
         p.stock = after;
-        return { productId: p.id, quantity: entry.quantity, price: documentType === "inbound" ? entry.price : 0, cost: documentType === "inbound" ? entry.price : oldAverage, before: before, after: after };
+        return { productId: p.id, quantity: entry.quantity, price: documentType === "inbound" ? entry.price : 0, cost: selectedCost, before: before, after: after };
       });
       var count = state.documents.length + 1;
       var no = (documentType === "inbound" ? "RK" : "CK") + "-OFF-" + String(count).padStart(4, "0");
       var purpose = documentType === "inbound" ? "采购入库" : (purposeInput.value.trim() || "未填写用途（已忽略）");
-      var completedDocument = { id: docId, no: no, type: documentType, purpose: purpose, supplier: supplierInput ? supplierInput.value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", at: now(), operator: "离线管理员", items: items };
+      var completedDocument = { id: docId, no: no, type: documentType, purpose: purpose, supplier: supplierInput ? supplierInput.value.trim() : "", ref: documentType === "inbound" ? document.getElementById("docRef").value.trim() : "", costMethod: documentType === "outbound" ? (state.settings.costMethod || "weighted") : "", at: now(), operator: "离线管理员", items: items };
       state.documents.unshift(completedDocument);
       save();
       draftLines = [{ product: "", quantity: "", price: "" }];
