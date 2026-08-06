@@ -141,6 +141,14 @@
     return { code: "", name: value };
   }
 
+  function nextProductCode() {
+    var max = state.products.reduce(function (value, product) {
+      var match = /^SKU-(\d+)$/i.exec(String(product.code || ""));
+      return Math.max(value, match ? Number(match[1]) : 0);
+    }, 0);
+    return "SKU-" + String(max + 1).padStart(6, "0");
+  }
+
   function money(cents) {
     return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", minimumFractionDigits: 2 }).format((cents || 0) / 100);
   }
@@ -322,8 +330,8 @@
       return (product.name + " " + product.code + " " + product.supplier).toLowerCase().indexOf(term) >= 0;
     });
     if (!matches.length) return '<div class="search-empty"><span>×</span><strong>没有找到匹配商品</strong><p>可尝试输入更短的品名、编号或供应商名称。</p></div>';
-    return '<div class="search-result-list">' + matches.map(function (product) {
-      return '<article class="search-result-card"><div class="search-result-main"><span class="search-avatar">' + esc(product.name.slice(0, 1)) + '</span><div><strong>' + esc(product.name) + '</strong><small>' + esc(product.code + " · " + (product.supplier || "未设置供应商")) + '</small></div></div><div class="search-result-metrics"><span><small>当前库存</small><b>' + product.stock + esc(product.unit) + '</b></span><span><small>平均价格</small><b>' + money(product.avg) + '</b></span><span><small>状态</small><b>' + esc(product.status) + '</b></span></div><div class="search-result-actions"><button class="primary" onclick="Warehouse.startProductDocument(\'inbound\',\'' + esc(product.id) + '\')">商品入库</button><button class="secondary" onclick="Warehouse.startProductDocument(\'outbound\',\'' + esc(product.id) + '\')">商品出库</button><button class="blue-action compact" onclick="Warehouse.openProductHistory(\'' + esc(product.id) + '\')">查看全周期</button></div></article>';
+    return '<div class="search-result-list"><div class="search-result-head"><span>商品名称</span><span>商品编号</span><span>默认供应商</span><span>当前库存</span><span>平均价格</span><span>状态</span><span>操作</span></div>' + matches.map(function (product) {
+      return '<article class="search-result-card"><div class="search-result-main" data-label="商品名称"><span class="search-avatar">' + esc(product.name.slice(0, 1)) + '</span><strong>' + esc(product.name) + '</strong></div><div class="search-result-cell search-code" data-label="商品编号"><b>' + esc(product.code) + '</b></div><div class="search-result-cell search-supplier" data-label="默认供应商"><b>' + esc(product.supplier || "未设置供应商") + '</b></div><div class="search-result-cell" data-label="当前库存"><b>' + product.stock + esc(product.unit) + '</b></div><div class="search-result-cell" data-label="平均价格"><b>' + money(product.avg) + '</b></div><div class="search-result-cell" data-label="状态"><b>' + esc(product.status) + '</b></div><div class="search-result-actions"><button class="primary" onclick="Warehouse.startProductDocument(\'inbound\',\'' + esc(product.id) + '\')">商品入库</button><button class="secondary" onclick="Warehouse.startProductDocument(\'outbound\',\'' + esc(product.id) + '\')">商品出库</button><button class="blue-action compact" onclick="Warehouse.openProductHistory(\'' + esc(product.id) + '\')">查看全周期</button></div></article>';
     }).join("") + '</div>';
   }
 
@@ -605,6 +613,17 @@
         window.Warehouse.addProduct();
       }
     },
+    productModalEnter: function (event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      window.Warehouse.addProduct();
+    },
+    clearProductCode: function () {
+      var input = document.getElementById("newCode");
+      if (!input) return;
+      input.value = "";
+      input.focus();
+    },
     undoLast: function () {
       if (!state.undoHistory.length) return;
       var entry = state.undoHistory.pop();
@@ -878,8 +897,9 @@
       prefill = prefill || {};
       if (prefill.source !== "inbound") pendingProductLine = null;
       var guessed = productPrefill(prefill.text || "");
-      var intro = prefill.source === "inbound" ? "库存中没有找到这个商品。已把入库时填写的内容带入，请补全带 * 的商品资料。" : "带 * 的项目必须填写；商品编号留空时由系统自动生成。";
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号</span><input id="newCode" value="' + esc(guessed.code) + '" placeholder="留空则系统生成" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.nextOnEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.nextOnEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.nextOnEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
+      if (!guessed.code) guessed.code = nextProductCode();
+      var intro = prefill.source === "inbound" ? "库存中没有找到这个商品。已把入库时填写的内容带入，请补全带 * 的商品资料；按 Enter 可直接建立并入库。" : "带 * 的项目必须填写；编号已自动生成，可清空后改为人工编号。按 Enter 可直接建立商品。";
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">SKU 为库存商品编号前缀</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
     },
     closeModal: function () {
       pendingProductLine = null;
@@ -907,8 +927,7 @@
         return errorAt("productError", "最低库存必须是非负整数。");
       }
       if (!code) {
-        var max = state.products.reduce(function (value, p) { var match = /^SKU-(\d+)$/.exec(p.code); return Math.max(value, match ? Number(match[1]) : 0); }, 0);
-        code = "SKU-" + String(max + 1).padStart(6, "0");
+        code = nextProductCode();
       }
       if (state.products.some(function (p) { return p.code.toLowerCase() === code.toLowerCase(); })) {
         flashFields([codeInput]);
