@@ -15,6 +15,8 @@
   var dataReady = false;
   var saveQueue = Promise.resolve();
   var pendingProductLine = null;
+  var selectedProductId = null;
+  var globalQuery = "";
 
   function uid(prefix) {
     return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
@@ -171,7 +173,12 @@
     return null;
   }
   function pageTitle() {
-    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "显示设置", backup: "数据备份" }[page] || "工作台";
+    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", "product-history": "商品全周期", search: "全局搜索", stocktake: "库存盘点", reports: "库存报表", products: "商品资料", settings: "显示设置", backup: "数据备份" }[page] || "工作台";
+  }
+
+  var productStatuses = ["正常供货", "补货已下单", "价格有变动", "启用替代供货", "暂停采购"];
+  function statusSelect(product) {
+    return '<select class="status-select" aria-label="修改' + esc(product.name) + '的状态" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" onchange="Warehouse.updateProductStatus(\'' + esc(product.id) + '\',this.value)">' + productStatuses.map(function (status) { return '<option' + (product.status === status ? " selected" : "") + '>' + esc(status) + '</option>'; }).join("") + '</select>';
   }
 
   function navButton(id, label, glyph) {
@@ -213,6 +220,8 @@
     if (page === "home") return homeView();
     if (page === "inbound" || page === "outbound") return documentView();
     if (page === "inventory") return inventoryView();
+    if (page === "product-history") return productHistoryView();
+    if (page === "search") return globalSearchView();
     if (page === "stocktake") return stocktakeView();
     if (page === "reports") return reportsView();
     if (page === "products") return productsView();
@@ -233,7 +242,7 @@
     var low = products.filter(function (p) { return p.stock <= p.min; });
     var value = products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
     return '<div class="stack">' +
-      '<button class="hero" onclick="Warehouse.showGuide()"><div><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></div><div class="hero-badge"><span>今天</span><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth + " · " + displayWeekday) + '</strong><small>' + displayDate.getFullYear() + '</small></div></button>' +
+      '<section class="hero"><button class="hero-guide" onclick="Warehouse.showGuide()"><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></button><button class="hero-search" onclick="Warehouse.go(\'search\')" aria-label="打开全局搜索"><span>⌕</span><strong>全局搜索</strong><small>供应商 · 商品编号 · 品名</small></button><div class="hero-badge"><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth) + '</strong><span>' + esc(displayWeekday) + '</span><small>' + displayDate.getFullYear() + '</small></div></section>' +
       '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
       '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
@@ -257,35 +266,69 @@
   function inventoryTable(products, editable) {
     if (editable) return productsTable(products);
     return '<div class="table inventory-table"><div class="thead"><span>商品</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>平均成本</span><span>库存金额</span></div>' + products.map(function (p) {
-      return '<div class="inventory-item"><div class="trow inventory-summary" role="button" tabindex="0" aria-expanded="false" aria-controls="history-' + esc(p.id) + '" onclick="Warehouse.toggleInventory(\'' + esc(p.id) + '\',this)" onkeydown="Warehouse.inventoryKey(event,\'' + esc(p.id) + '\',this)"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · 点击展开全周期记录") + '</small></div></div><div><span class="status">' + esc(p.status) + '</span></div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div class="inventory-value"><span>' + money(p.avg * p.stock) + '</span><b>⌄</b></div></div><div id="history-' + esc(p.id) + '" class="inventory-history" hidden>' + inventoryHistory(p) + '</div></div>';
+      return '<div class="inventory-item"><div class="trow inventory-summary" role="link" tabindex="0" onclick="Warehouse.openProductHistory(\'' + esc(p.id) + '\')" onkeydown="Warehouse.openProductKey(event,\'' + esc(p.id) + '\')"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code + " · 点击进入全周期记录") + '</small></div></div><div>' + statusSelect(p) + '</div><div class="qty"><strong>' + p.stock + '</strong> ' + esc(p.unit) + (p.stock <= p.min ? '<div class="low">低库存</div>' : "") + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + money(p.avg) + '</div><div class="inventory-value"><span>' + money(p.avg * p.stock) + '</span><b>→</b></div></div></div>';
     }).join("") + '</div>';
   }
 
   function productsTable(products) {
     return '<div class="table product-master-table"><div class="thead"><span>商品编号</span><span>商品名称</span><span>默认供应商</span><span>状态</span><span>操作</span></div>' + products.map(function (p) {
-      return '<div class="trow"><div class="master-code"><strong>' + esc(p.code) + '</strong></div><div class="master-name"><strong>' + esc(p.name) + '</strong><small>单位：' + esc(p.unit) + '</small></div><div class="master-supplier">' + esc(p.supplier || "未设置供应商") + '</div><div><span class="status">' + esc(p.status) + '</span></div><div><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div></div>';
+      return '<div class="trow"><div class="master-code"><strong>' + esc(p.code) + '</strong></div><div class="master-name"><strong>' + esc(p.name) + '</strong><small>单位：' + esc(p.unit) + '</small></div><div class="master-supplier">' + esc(p.supplier || "未设置供应商") + '</div><div>' + statusSelect(p) + '</div><div><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div></div>';
     }).join("") + '</div>';
   }
 
-  function inventoryHistory(product) {
+  function productLifecycle(product) {
     var docs = state.documents.filter(function (doc) {
       return doc.items.some(function (line) { return line.productId === product.id; });
     }).slice().sort(function (a, b) { return new Date(a.at) - new Date(b.at); });
-    var inboundCount = docs.filter(function (doc) { return doc.type === "inbound"; }).length;
-    var outboundCount = docs.filter(function (doc) { return doc.type === "outbound"; }).length;
-    var events = '<article class="lifecycle-event lifecycle-created"><span class="lifecycle-icon">建</span><div><strong>商品建库</strong><small>' + esc(fullDateTime(product.createdAt)) + '</small><p>建立商品资料 · 编号 ' + esc(product.code) + '</p></div><b>起点</b></article>';
-    events += docs.map(function (doc) {
+    return [{ at: product.createdAt, type: "created", typeText: "建库", no: "—", quantity: null, unitPrice: null, priceLabel: "—", before: null, after: 0, detail: "建立商品资料 · 编号 " + product.code, operator: "离线管理员" }].concat(docs.map(function (doc) {
       var line = doc.items.find(function (item) { return item.productId === product.id; });
       var isInbound = doc.type === "inbound";
       var isOutbound = doc.type === "outbound";
-      var signedQuantity = isInbound ? "+" + line.quantity : isOutbound ? "−" + line.quantity : ((line.quantity > 0 ? "+" : "") + line.quantity);
       var unitPrice = isInbound ? line.price : line.cost;
       var priceLabel = isInbound ? "入库单价" : isOutbound ? "当时出库成本" : "盘点时成本";
       var detail = isInbound ? (doc.supplier || "未填写供应商") + (doc.ref ? " · 单号 " + doc.ref : "") : doc.purpose;
-      var stockChange = Number.isFinite(Number(line.before)) && Number.isFinite(Number(line.after)) ? ("库存 " + line.before + " → " + line.after + product.unit) : "";
-      return '<article class="lifecycle-event ' + doc.type + '"><span class="lifecycle-icon">' + icon(doc.type) + '</span><div><strong>' + esc(typeLabel(doc.type) + " · " + doc.no) + '</strong><small>' + esc(fullDateTime(doc.at) + " · " + doc.operator) + '</small><p>' + esc(detail) + (stockChange ? " · " + esc(stockChange) : "") + '</p></div><div class="lifecycle-amount"><b>' + esc(signedQuantity + product.unit) + '</b><small>' + esc(priceLabel) + ' ' + money(unitPrice) + '</small></div></article>';
+      return { at: doc.at, type: doc.type, typeText: typeLabel(doc.type), no: doc.no, quantity: isOutbound ? -Math.abs(line.quantity) : line.quantity, unitPrice: Number(unitPrice || 0), priceLabel: priceLabel, before: line.before, after: line.after, detail: detail, operator: doc.operator };
+    }));
+  }
+
+  function productHistoryView() {
+    var product = productById(selectedProductId);
+    if (!product || product.archived) return '<div class="empty"><strong>商品不存在或已移除</strong><p><button class="secondary" onclick="Warehouse.go(\'inventory\')">返回库存</button></p></div>';
+    var records = productLifecycle(product);
+    var rows = records.map(function (record) {
+      var quantity = record.quantity == null ? "—" : ((record.quantity > 0 ? "+" : "") + record.quantity + product.unit);
+      var stockChange = record.before == null ? "—" : record.before + " → " + record.after + product.unit;
+      return '<div class="history-row"><div>' + esc(fullDateTime(record.at)) + '</div><div><span class="history-type ' + esc(record.type) + '">' + esc(record.typeText) + '</span></div><div><strong>' + esc(record.no) + '</strong></div><div class="history-qty">' + esc(quantity) + '</div><div>' + (record.unitPrice == null ? "—" : money(record.unitPrice)) + '<small>' + esc(record.priceLabel) + '</small></div><div>' + esc(stockChange) + '</div><div>' + esc(record.detail) + '</div><div>' + esc(record.operator) + '</div></div>';
     }).join("");
-    return '<div class="history-head"><div><strong>全周期记录</strong><small>建库至今的入库、出库与盘点明细</small></div><div><span>入库 ' + inboundCount + ' 次</span><span>出库 ' + outboundCount + ' 次</span><span>当前 ' + product.stock + esc(product.unit) + '</span></div></div><div class="lifecycle">' + events + '</div>';
+    return '<div class="stack"><section class="heading history-heading"><div><button class="back-link" onclick="Warehouse.go(\'inventory\')">← 返回库存</button><p class="eyebrow">商品全周期</p><h1>' + esc(product.name) + '</h1><p>' + esc(product.code + " · " + (product.supplier || "未设置供应商")) + '</p></div><button class="blue-action" onclick="Warehouse.exportProductHistory(\'' + esc(product.id) + '\')">⇩ 导出 Excel</button></section><section class="history-summary"><article><span>当前库存</span><strong>' + product.stock + '<small>' + esc(product.unit) + '</small></strong></article><article><span>移动平均价</span><strong>' + money(product.avg) + '</strong></article><article><span>供应状态</span>' + statusSelect(product) + '</article><article><span>建库时间</span><strong class="summary-date">' + esc(fullDateTime(product.createdAt)) + '</strong></article></section><section class="panel scroll"><div class="history-table"><div class="history-head-row"><span>时间</span><span>类型</span><span>单号</span><span>数量</span><span>单价/成本</span><span>库存变化</span><span>供应商/用途</span><span>操作人</span></div>' + rows + '</div></section></div>';
+  }
+
+  function globalSuggestions() {
+    var seen = {};
+    var values = [];
+    activeProducts().forEach(function (product) {
+      [product.name, product.code, product.supplier].forEach(function (value) {
+        value = String(value || "").trim();
+        if (value && !seen[value.toLowerCase()]) { seen[value.toLowerCase()] = true; values.push(value); }
+      });
+    });
+    return values.map(function (value) { return '<option value="' + esc(value) + '"></option>'; }).join("");
+  }
+
+  function globalSearchResults(query) {
+    var term = String(query || "").trim().toLowerCase();
+    if (!term) return '<div class="search-empty"><span>⌕</span><strong>输入供应商、商品编号或品名</strong><p>选择联想词后会显示库存、价格和快捷操作。</p></div>';
+    var matches = activeProducts().filter(function (product) {
+      return (product.name + " " + product.code + " " + product.supplier).toLowerCase().indexOf(term) >= 0;
+    });
+    if (!matches.length) return '<div class="search-empty"><span>×</span><strong>没有找到匹配商品</strong><p>可尝试输入更短的品名、编号或供应商名称。</p></div>';
+    return '<div class="search-result-list">' + matches.map(function (product) {
+      return '<article class="search-result-card"><div class="search-result-main"><span class="search-avatar">' + esc(product.name.slice(0, 1)) + '</span><div><strong>' + esc(product.name) + '</strong><small>' + esc(product.code + " · " + (product.supplier || "未设置供应商")) + '</small></div></div><div class="search-result-metrics"><span><small>当前库存</small><b>' + product.stock + esc(product.unit) + '</b></span><span><small>平均价格</small><b>' + money(product.avg) + '</b></span><span><small>状态</small><b>' + esc(product.status) + '</b></span></div><div class="search-result-actions"><button class="primary" onclick="Warehouse.startProductDocument(\'inbound\',\'' + esc(product.id) + '\')">商品入库</button><button class="secondary" onclick="Warehouse.startProductDocument(\'outbound\',\'' + esc(product.id) + '\')">商品出库</button><button class="blue-action compact" onclick="Warehouse.openProductHistory(\'' + esc(product.id) + '\')">查看全周期</button></div></article>';
+    }).join("") + '</div>';
+  }
+
+  function globalSearchView() {
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">跨商品检索</p><h1>全局搜索</h1><p>支持供应商、商品编号和商品名称联想查询。</p></div><button class="secondary" onclick="Warehouse.go(\'home\')">返回工作台</button></section><section class="global-search-panel"><div class="global-search-box"><span>⌕</span><input id="globalSearchInput" list="globalSuggestions" value="' + esc(globalQuery) + '" placeholder="输入供应商、编号或商品名称" autocomplete="off" oninput="Warehouse.globalSearch(this.value)"><button onclick="Warehouse.clearGlobalSearch()" aria-label="清空搜索">×</button></div><datalist id="globalSuggestions">' + globalSuggestions() + '</datalist><div id="globalSearchResults">' + globalSearchResults(globalQuery) + '</div></section></div>';
   }
 
   function collectDraftLines() {
@@ -401,7 +444,7 @@
   }
 
   function download(name, content, type) {
-    var blob = new Blob([content], { type: type });
+    var blob = content && typeof content.arrayBuffer === "function" ? content : new Blob([content], { type: type });
     var url = URL.createObjectURL(blob);
     var link = document.createElement("a");
     link.href = url;
@@ -410,17 +453,112 @@
     URL.revokeObjectURL(url);
   }
 
-  function xmlCell(value) {
-    var numeric = typeof value === "number";
-    return '<Cell><Data ss:Type="' + (numeric ? "Number" : "String") + '">' + esc(value) + '</Data></Cell>';
+  function xlsxEscape(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (char) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[char]; });
   }
-  function xmlSheet(name, rows) {
-    return '<Worksheet ss:Name="' + esc(name) + '"><Table>' + rows.map(function (row) { return "<Row>" + row.map(xmlCell).join("") + "</Row>"; }).join("") + "</Table></Worksheet>";
+
+  function xlsxColumn(index) {
+    var value = "";
+    do { value = String.fromCharCode(65 + (index % 26)) + value; index = Math.floor(index / 26) - 1; } while (index >= 0);
+    return value;
+  }
+
+  function xlsxCell(value, row, col, format) {
+    var ref = xlsxColumn(col) + (row + 1);
+    var style = row === 0 ? 1 : format === "currency" ? 2 : format === "date" ? 3 : format === "integer" ? 4 : format === "decimal" ? 5 : 0;
+    if (value == null || value === "") return '<c r="' + ref + '" s="' + style + '"/>';
+    if (row > 0 && format === "date") {
+      var date = value instanceof Date ? value : new Date(value);
+      var serial = date.getTime() / 86400000 + 25569;
+      return '<c r="' + ref + '" s="' + style + '"><v>' + serial + '</v></c>';
+    }
+    if (typeof value === "number" && Number.isFinite(value)) return '<c r="' + ref + '" s="' + style + '"><v>' + value + '</v></c>';
+    return '<c r="' + ref + '" s="' + style + '" t="inlineStr"><is><t xml:space="preserve">' + xlsxEscape(value) + '</t></is></c>';
+  }
+
+  function xlsxSheet(rows, formats) {
+    var columnCount = rows.reduce(function (max, row) { return Math.max(max, row.length); }, 0);
+    var widths = [];
+    for (var col = 0; col < columnCount; col += 1) {
+      var width = 10;
+      rows.forEach(function (row) {
+        var value = row[col];
+        var length = value instanceof Date ? 19 : String(value == null ? "" : value).length;
+        width = Math.max(width, Math.min(32, length * 1.8 + 3));
+      });
+      widths.push('<col min="' + (col + 1) + '" max="' + (col + 1) + '" width="' + width.toFixed(1) + '" customWidth="1"/>');
+    }
+    var sheetRows = rows.map(function (values, row) {
+      return '<row r="' + (row + 1) + '"' + (row === 0 ? ' ht="24" customHeight="1"' : "") + '>' + values.map(function (value, col) { return xlsxCell(value, row, col, formats[col]); }).join("") + '</row>';
+    }).join("");
+    var end = xlsxColumn(Math.max(0, columnCount - 1)) + Math.max(1, rows.length);
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:' + end + '"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>' + widths.join("") + '</cols><sheetData>' + sheetRows + '</sheetData>' + (rows.length ? '<autoFilter ref="A1:' + end + '"/>' : "") + '</worksheet>';
+  }
+
+  function little16(value) { var bytes = new Uint8Array(2); new DataView(bytes.buffer).setUint16(0, value, true); return bytes; }
+  function little32(value) { var bytes = new Uint8Array(4); new DataView(bytes.buffer).setUint32(0, value >>> 0, true); return bytes; }
+  function joinBytes(parts) {
+    var total = parts.reduce(function (sum, part) { return sum + part.length; }, 0);
+    var output = new Uint8Array(total);
+    var offset = 0;
+    parts.forEach(function (part) { output.set(part, offset); offset += part.length; });
+    return output;
+  }
+
+  var crcTable = null;
+  function crc32(bytes) {
+    if (!crcTable) {
+      crcTable = [];
+      for (var n = 0; n < 256; n += 1) {
+        var c = n;
+        for (var k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        crcTable[n] = c >>> 0;
+      }
+    }
+    var crc = 0xffffffff;
+    for (var i = 0; i < bytes.length; i += 1) crc = crcTable[(crc ^ bytes[i]) & 255] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function xlsxZip(files) {
+    var encoder = new TextEncoder();
+    var localParts = [];
+    var centralParts = [];
+    var offset = 0;
+    files.forEach(function (file) {
+      var name = encoder.encode(file.name);
+      var data = typeof file.data === "string" ? encoder.encode(file.data) : file.data;
+      var crc = crc32(data);
+      var local = joinBytes([little32(0x04034b50), little16(20), little16(0x0800), little16(0), little16(0), little16(0), little32(crc), little32(data.length), little32(data.length), little16(name.length), little16(0), name, data]);
+      localParts.push(local);
+      centralParts.push(joinBytes([little32(0x02014b50), little16(20), little16(20), little16(0x0800), little16(0), little16(0), little16(0), little32(crc), little32(data.length), little32(data.length), little16(name.length), little16(0), little16(0), little16(0), little16(0), little32(0), little32(offset), name]));
+      offset += local.length;
+    });
+    var central = joinBytes(centralParts);
+    var end = joinBytes([little32(0x06054b50), little16(0), little16(0), little16(files.length), little16(files.length), little32(central.length), little32(offset), little16(0)]);
+    return new Blob([joinBytes(localParts), central, end], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
+  function createXlsx(sheets) {
+    var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + sheets.map(function (_, index) { return '<Override PartName="/xl/worksheets/sheet' + (index + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join("") + '</Types>';
+    var workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map(function (sheet, index) { return '<sheet name="' + xlsxEscape(sheet.name) + '" sheetId="' + (index + 1) + '" r:id="rId' + (index + 1) + '"/>'; }).join("") + '</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>';
+    var workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + sheets.map(function (_, index) { return '<Relationship Id="rId' + (index + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (index + 1) + '.xml"/>'; }).join("") + '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+    var styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm:ss"/><numFmt numFmtId="165" formatCode="¥#,##0.00"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Microsoft YaHei"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Microsoft YaHei"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4CA7FE"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    var files = [
+      { name: "[Content_Types].xml", data: contentTypes },
+      { name: "_rels/.rels", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: "xl/workbook.xml", data: workbook },
+      { name: "xl/_rels/workbook.xml.rels", data: workbookRels },
+      { name: "xl/styles.xml", data: styles }
+    ];
+    sheets.forEach(function (sheet, index) { files.push({ name: "xl/worksheets/sheet" + (index + 1) + ".xml", data: xlsxSheet(sheet.rows, sheet.formats || []) }); });
+    return xlsxZip(files);
   }
 
   window.Warehouse = {
     go: function (next) {
       page = next;
+      if (next === "search") globalQuery = "";
       if (next === "inbound" || next === "outbound") {
         documentType = next;
         draftLines = [{ product: "", quantity: "", price: "" }];
@@ -430,6 +568,7 @@
       }
       render();
       window.scrollTo(0, 0);
+      if (next === "search") setTimeout(function () { var input = document.getElementById("globalSearchInput"); if (input) input.focus(); }, 0);
     },
     showGuide: function () {
       document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card guide-card"><p class="eyebrow">仓储台使用方法</p><h2>先建商品，再做出入库</h2><div class="guide-steps"><article><b>1</b><div><h3>建立商品资料</h3><p>第一次收到某种商品时，先填写品名、编号、单位、最低库存和默认供应商。</p></div></article><article><b>2</b><div><h3>登记商品入库</h3><p>选择商品，填写数量、实际单价和本次供应商，系统自动增加库存并计算移动平均价。</p></div></article><article><b>3</b><div><h3>登记商品出库</h3><p>选择商品并填写数量和用途；超过现有库存时，系统会直接禁止提交。</p></div></article></div><div class="modal-actions"><button class="primary" onclick="Warehouse.closeModal()">知道了</button></div></div></div>';
@@ -462,6 +601,8 @@
         setTimeout(function () { fields[index + 1].focus(); }, 0);
       } else if (index >= 0 && inDocumentForm && (page === "inbound" || page === "outbound")) {
         window.Warehouse.submitDocument();
+      } else if (index >= 0 && !inDocumentForm && pendingProductLine !== null && page === "inbound") {
+        window.Warehouse.addProduct();
       }
     },
     undoLast: function () {
@@ -485,20 +626,50 @@
       var filtered = activeProducts().filter(function (p) { return (p.code + " " + p.name + " " + p.supplier).toLowerCase().indexOf(term) >= 0; });
       document.getElementById("inventoryTable").innerHTML = inventoryTable(filtered, false);
     },
-    toggleInventory: function (id, trigger) {
-      var detail = document.getElementById("history-" + id);
-      if (!detail) return;
-      var willOpen = detail.hidden;
-      detail.hidden = !willOpen;
-      if (trigger) {
-        trigger.setAttribute("aria-expanded", willOpen ? "true" : "false");
-        trigger.classList.toggle("open", willOpen);
-      }
+    openProductHistory: function (id) {
+      selectedProductId = id;
+      page = "product-history";
+      render();
+      window.scrollTo(0, 0);
     },
-    inventoryKey: function (event, id, trigger) {
+    openProductKey: function (event, id) {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      window.Warehouse.toggleInventory(id, trigger);
+      window.Warehouse.openProductHistory(id);
+    },
+    updateProductStatus: function (id, value) {
+      var product = productById(id);
+      if (!product || product.archived || productStatuses.indexOf(value) < 0 || product.status === value) return;
+      recordUndo("修改商品状态：" + product.name);
+      product.status = value;
+      save();
+      render();
+      toast("已更新“" + product.name + "”状态：" + value);
+    },
+    globalSearch: function (value) {
+      globalQuery = value;
+      var host = document.getElementById("globalSearchResults");
+      if (host) host.innerHTML = globalSearchResults(value);
+    },
+    clearGlobalSearch: function () {
+      globalQuery = "";
+      var input = document.getElementById("globalSearchInput");
+      if (input) { input.value = ""; input.focus(); }
+      var host = document.getElementById("globalSearchResults");
+      if (host) host.innerHTML = globalSearchResults("");
+    },
+    startProductDocument: function (type, id) {
+      var product = productById(id);
+      if (!product || product.archived || (type !== "inbound" && type !== "outbound")) return;
+      page = type;
+      documentType = type;
+      draftLines = [{ product: product.code + " · " + product.name, quantity: "", price: type === "inbound" && lastInboundPrice(product.id) !== null ? (lastInboundPrice(product.id) / 100).toFixed(2) : "" }];
+      draftSupplier = type === "inbound" ? product.supplier : "";
+      draftRef = "";
+      draftPurpose = "";
+      render();
+      window.scrollTo(0, 0);
+      setTimeout(function () { var row = document.querySelector(".doc-line"); var input = row && row.querySelector("[data-field=quantity]"); if (input) input.focus(); }, 0);
     },
     removeProduct: function (id) {
       var product = productById(id);
@@ -794,13 +965,29 @@
     },
     exportExcel: function (currentPeriod) {
       var docs = currentPeriod ? filteredDocs() : state.documents;
-      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "移动平均价", "库存金额"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, p.avg / 100, p.avg * p.stock / 100]; }));
-      var movements = [["日期", "单号", "类型", "商品编号", "品名", "数量", "单位", "用途", "单价/成本", "金额"]];
-      docs.forEach(function (doc) { doc.items.forEach(function (line) { var p = productById(line.productId) || { code: "", name: "未知商品", unit: "" }; var unit = doc.type === "inbound" ? line.price : line.cost; movements.push([doc.at.slice(0, 10), doc.no, typeLabel(doc.type), p.code, p.name, doc.type === "stocktake" ? line.counted : line.quantity, p.unit, doc.purpose, unit / 100, Math.abs(line.quantity) * unit / 100]); }); });
-      var xml = '<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' + xmlSheet("库存", inventory) + xmlSheet("流水", movements) + "</Workbook>";
-      var exportName = currentPeriod ? ("仓储台" + reportPeriodLabel() + "-" + reportFilterValue() + ".xls") : ("仓储台离线数据-" + new Date().toISOString().slice(0, 10) + ".xls");
-      download(exportName, "\ufeff" + xml, "application/vnd.ms-excel");
+      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "移动平均价", "库存金额", "建库时间"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, p.avg / 100, p.avg * p.stock / 100, new Date(p.createdAt)]; }));
+      var movements = [["时间", "单号", "类型", "商品编号", "品名", "数量", "单位", "供应商/用途", "单价/成本", "金额", "操作人"]];
+      docs.forEach(function (doc) { doc.items.forEach(function (line) { var p = productById(line.productId) || { code: "", name: "未知商品", unit: "" }; var unit = doc.type === "inbound" ? line.price : line.cost; var detail = doc.type === "inbound" ? doc.supplier : doc.purpose; movements.push([new Date(doc.at), doc.no, typeLabel(doc.type), p.code, p.name, doc.type === "outbound" ? -Math.abs(line.quantity) : line.quantity, p.unit, detail, unit / 100, Math.abs(line.quantity) * unit / 100, doc.operator]); }); });
+      var exportName = currentPeriod ? ("仓储台" + reportPeriodLabel() + "-" + reportFilterValue() + ".xlsx") : ("仓储台离线数据-" + new Date().toISOString().slice(0, 10) + ".xlsx");
+      var workbook = createXlsx([
+        { name: "库存", rows: inventory, formats: ["text", "text", "text", "integer", "integer", "text", "text", "currency", "currency", "date"] },
+        { name: "流水", rows: movements, formats: ["date", "text", "text", "text", "text", "integer", "text", "text", "currency", "currency", "text"] }
+      ]);
+      download(exportName, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       toast("Excel 已导出。");
+    },
+    exportProductHistory: function (id) {
+      var product = productById(id);
+      if (!product) return;
+      var overview = [["项目", "内容"], ["商品编号", product.code], ["商品名称", product.name], ["默认供应商", product.supplier], ["状态", product.status], ["单位", product.unit], ["当前库存", product.stock], ["移动平均价", product.avg / 100], ["建库时间", new Date(product.createdAt)]];
+      var history = [["时间", "类型", "单号", "数量", "单位", "单价/成本", "价格说明", "变动前库存", "变动后库存", "供应商/用途", "操作人"]];
+      productLifecycle(product).forEach(function (record) { history.push([new Date(record.at), record.typeText, record.no, record.quantity, product.unit, record.unitPrice == null ? null : record.unitPrice / 100, record.priceLabel, record.before, record.after, record.detail, record.operator]); });
+      var workbook = createXlsx([
+        { name: "商品概览", rows: overview, formats: ["text", "text"] },
+        { name: "全周期记录", rows: history, formats: ["date", "text", "text", "integer", "text", "currency", "text", "integer", "integer", "text", "text"] }
+      ]);
+      download("商品全周期-" + product.code + "-" + new Date().toISOString().slice(0, 10) + ".xlsx", workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      toast("商品全周期 Excel 已导出。");
     },
     reset: function () {
       if (!confirm("确认清空全部商品、库存和流水？清空后可通过左侧“撤回上一步”恢复，但仍建议先立即备份。")) return;
