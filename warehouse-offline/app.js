@@ -17,6 +17,12 @@
   var pendingProductLine = null;
   var selectedProductId = null;
   var globalQuery = "";
+  var pinyinCollator = typeof Intl !== "undefined" && Intl.Collator ? new Intl.Collator("zh-Hans-CN-u-co-pinyin") : null;
+  var pinyinInitialBounds = [
+    ["a", "阿"], ["b", "芭"], ["c", "擦"], ["d", "搭"], ["e", "蛾"], ["f", "发"], ["g", "噶"], ["h", "哈"],
+    ["j", "击"], ["k", "喀"], ["l", "垃"], ["m", "妈"], ["n", "拿"], ["o", "哦"], ["p", "啪"], ["q", "期"],
+    ["r", "然"], ["s", "撒"], ["t", "塌"], ["w", "挖"], ["x", "昔"], ["y", "压"], ["z", "匝"]
+  ];
 
   function uid(prefix) {
     return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
@@ -143,10 +149,25 @@
 
   function nextProductCode() {
     var max = state.products.reduce(function (value, product) {
-      var match = /^SKU-(\d+)$/i.exec(String(product.code || ""));
+      var match = /^ZERO-(\d+)$/i.exec(String(product.code || ""));
       return Math.max(value, match ? Number(match[1]) : 0);
     }, 0);
-    return "SKU-" + String(max + 1).padStart(6, "0");
+    return "ZERO-" + String(max + 1).padStart(6, "0");
+  }
+
+  function pinyinInitials(value) {
+    return Array.from(String(value || "")).map(function (character) {
+      if (/[A-Za-z0-9]/.test(character)) return character.toLowerCase();
+      if (!pinyinCollator || !/[\u3400-\u9fff]/.test(character)) return "";
+      for (var index = pinyinInitialBounds.length - 1; index >= 0; index -= 1) {
+        if (pinyinCollator.compare(character, pinyinInitialBounds[index][1]) >= 0) return pinyinInitialBounds[index][0];
+      }
+      return "";
+    }).join("");
+  }
+
+  function productSearchText(product) {
+    return [product.name, product.code, product.supplier, pinyinInitials(product.name), pinyinInitials(product.supplier)].join(" ").toLowerCase();
   }
 
   function money(cents) {
@@ -250,7 +271,7 @@
     var low = products.filter(function (p) { return p.stock <= p.min; });
     var value = products.reduce(function (sum, p) { return sum + p.stock * p.avg; }, 0);
     return '<div class="stack">' +
-      '<section class="hero"><button class="hero-guide" onclick="Warehouse.showGuide()"><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></button><button class="hero-search" onclick="Warehouse.go(\'search\')" aria-label="打开全局搜索"><span>⌕</span><strong>全局搜索</strong><small>供应商 · 商品编号 · 品名</small></button><div class="hero-badge"><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth) + '</strong><span>' + esc(displayWeekday) + '</span><small>' + displayDate.getFullYear() + '</small></div></section>' +
+      '<section class="hero"><button class="hero-guide" onclick="Warehouse.showGuide()"><p class="eyebrow">单机离线工作台</p><h1>库存清楚，出入有据。</h1><p>断网也能完成登记、盘点、报表和本机备份。<b class="guide-hint">点击查看使用方法 →</b></p></button><button class="hero-search" onclick="Warehouse.go(\'search\')" aria-label="打开全局搜索"><span>⌕</span><strong>全局搜索</strong><small>供应商 · 商品编号 · 品名 · 拼音首字母</small></button><div class="hero-badge"><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth) + '</strong><span>' + esc(displayWeekday) + '</span><small>' + displayDate.getFullYear() + '</small></div></section>' +
       '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
       '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>移动加权平均</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
@@ -315,7 +336,7 @@
     var seen = {};
     var values = [];
     activeProducts().forEach(function (product) {
-      [product.name, product.code, product.supplier].forEach(function (value) {
+      [product.name, product.code, product.supplier, pinyinInitials(product.name), pinyinInitials(product.supplier)].forEach(function (value) {
         value = String(value || "").trim();
         if (value && !seen[value.toLowerCase()]) { seen[value.toLowerCase()] = true; values.push(value); }
       });
@@ -327,7 +348,7 @@
     var term = String(query || "").trim().toLowerCase();
     if (!term) return '<div class="search-empty"><span>⌕</span><strong>输入供应商、商品编号或品名</strong><p>选择联想词后会显示库存、价格和快捷操作。</p></div>';
     var matches = activeProducts().filter(function (product) {
-      return (product.name + " " + product.code + " " + product.supplier).toLowerCase().indexOf(term) >= 0;
+      return productSearchText(product).indexOf(term) >= 0;
     });
     if (!matches.length) return '<div class="search-empty"><span>×</span><strong>没有找到匹配商品</strong><p>可尝试输入更短的品名、编号或供应商名称。</p></div>';
     return '<div class="search-result-list"><div class="search-result-head"><span>商品名称</span><span>商品编号</span><span>默认供应商</span><span>当前库存</span><span>平均价格</span><span>状态</span><span>操作</span></div>' + matches.map(function (product) {
@@ -336,7 +357,7 @@
   }
 
   function globalSearchView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">跨商品检索</p><h1>全局搜索</h1><p>支持供应商、商品编号和商品名称联想查询。</p></div><button class="secondary" onclick="Warehouse.go(\'home\')">返回工作台</button></section><section class="global-search-panel"><div class="global-search-box"><span>⌕</span><input id="globalSearchInput" list="globalSuggestions" value="' + esc(globalQuery) + '" placeholder="输入供应商、编号或商品名称" autocomplete="off" oninput="Warehouse.globalSearch(this.value)"><button onclick="Warehouse.clearGlobalSearch()" aria-label="清空搜索">×</button></div><datalist id="globalSuggestions">' + globalSuggestions() + '</datalist><div id="globalSearchResults">' + globalSearchResults(globalQuery) + '</div></section></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">跨商品检索</p><h1>全局搜索</h1><p>支持供应商、商品编号、商品名称及中文拼音首字母联想查询。</p></div><button class="secondary" onclick="Warehouse.go(\'home\')">返回工作台</button></section><section class="global-search-panel"><div class="global-search-box"><span>⌕</span><input id="globalSearchInput" list="globalSuggestions" value="' + esc(globalQuery) + '" placeholder="输入品名、供应商、编号或拼音首字母，如 yw" autocomplete="off" oninput="Warehouse.globalSearch(this.value)"><button onclick="Warehouse.clearGlobalSearch()" aria-label="清空搜索">×</button></div><datalist id="globalSuggestions">' + globalSuggestions() + '</datalist><div id="globalSearchResults">' + globalSearchResults(globalQuery) + '</div></section></div>';
   }
 
   function collectDraftLines() {
@@ -899,7 +920,7 @@
       var guessed = productPrefill(prefill.text || "");
       if (!guessed.code) guessed.code = nextProductCode();
       var intro = prefill.source === "inbound" ? "库存中没有找到这个商品。已把入库时填写的内容带入，请补全带 * 的商品资料；按 Enter 可直接建立并入库。" : "带 * 的项目必须填写；编号已自动生成，可清空后改为人工编号。按 Enter 可直接建立商品。";
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">SKU 为库存商品编号前缀</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">ZERO 为默认商品编号前缀</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
     },
     closeModal: function () {
       pendingProductLine = null;
