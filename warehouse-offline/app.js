@@ -35,15 +35,16 @@
       version: 1,
       products: [],
       documents: [],
-      settings: { fontScale: 1, costMethod: "weighted" },
+      settings: { fontScale: 1, costMethod: "weighted", productCodePrefix: "ZERO" },
       undoHistory: []
     };
   }
 
   function normalizeState(value) {
-    if (!value.settings) value.settings = { fontScale: 1, costMethod: "weighted" };
+    if (!value.settings) value.settings = { fontScale: 1, costMethod: "weighted", productCodePrefix: "ZERO" };
     if ([1, 1.2, 1.5].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
     if (["weighted", "fifo", "lastInbound"].indexOf(value.settings.costMethod) < 0) value.settings.costMethod = "weighted";
+    if (typeof value.settings.productCodePrefix !== "string") value.settings.productCodePrefix = "ZERO";
     if (!Array.isArray(value.undoHistory)) value.undoHistory = [];
     value.products.forEach(function (product) {
       product.archived = product.archived === true;
@@ -151,12 +152,28 @@
     return { code: "", name: value };
   }
 
+  function productCodePrefix() {
+    return String(state.settings && typeof state.settings.productCodePrefix === "string" ? state.settings.productCodePrefix : "ZERO").trim();
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
   function nextProductCode() {
+    var prefix = productCodePrefix();
+    var pattern = prefix ? new RegExp("^" + escapeRegExp(prefix) + "-(\\d+)$", "i") : /^(\d+)$/;
     var max = state.products.reduce(function (value, product) {
-      var match = /^ZERO-(\d+)$/i.exec(String(product.code || ""));
+      var match = pattern.exec(String(product.code || ""));
       return Math.max(value, match ? Number(match[1]) : 0);
     }, 0);
-    return "ZERO-" + String(max + 1).padStart(6, "0");
+    var next = max + 1;
+    var candidate = "";
+    do {
+      candidate = (prefix ? prefix + "-" : "") + String(next).padStart(6, "0");
+      next += 1;
+    } while (state.products.some(function (product) { return String(product.code || "").toLowerCase() === candidate.toLowerCase(); }));
+    return candidate;
   }
 
   function pinyinInitials(value) {
@@ -503,7 +520,9 @@
   function settingsView() {
     var current = Number(state.settings.fontScale || 1);
     var method = state.settings.costMethod || "weighted";
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">系统偏好</p><h1>设置</h1><p>显示大小和出库计价方式会保存在本机 data 文件夹。</p></div></section><section class="setting-section"><div class="setting-section-title"><h2>全局字体大小</h2></div><div class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>较大</b><span>文字和按钮同步增大</span><em>120%</em></button><button class="setting-option ' + (current === 1.5 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.5)"><b>特大</b><span>适合远距离查看</span><em>150%</em></button></div></section><section class="setting-section"><div class="setting-section-title"><h2>出库计价方式</h2><p>只影响之后新建的出库单，历史流水不会改变。</p></div><div class="cost-method-grid"><button class="cost-option ' + (method === "weighted" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'weighted\')"><b>移动加权平均</b><span>综合现有库存与每次入库价格，波动较平稳</span><em>常用</em></button><button class="cost-option ' + (method === "fifo" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'fifo\')"><b>先进先出</b><span>优先使用最早批次的入库成本</span><em>FIFO</em></button><button class="cost-option ' + (method === "lastInbound" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'lastInbound\')"><b>最近入库价</b><span>使用该商品最近一次实际入库单价</span><em>最新</em></button></div></section></div>';
+    var prefix = productCodePrefix();
+    var preview = (prefix ? prefix + "-" : "") + "000001";
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">系统偏好</p><h1>设置</h1><p>显示大小、商品编号和出库计价方式会保存在本机 data 文件夹。</p></div></section><section class="setting-section"><div class="setting-section-title"><h2>全局字体大小</h2></div><div class="settings-grid"><button class="setting-option ' + (current === 1 ? "active" : "") + '" onclick="Warehouse.setFontScale(1)"><b>标准</b><span>适合较大屏幕</span><em>100%</em></button><button class="setting-option ' + (current === 1.2 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.2)"><b>较大</b><span>文字和按钮同步增大</span><em>120%</em></button><button class="setting-option ' + (current === 1.5 ? "active" : "") + '" onclick="Warehouse.setFontScale(1.5)"><b>特大</b><span>适合远距离查看</span><em>150%</em></button></div></section><section class="setting-section"><div class="setting-section-title"><h2>商品编号前缀</h2><p>只影响之后自动生成的编号，已有商品编号不会改变。</p></div><div class="prefix-setting"><label class="field"><span>前缀名称</span><span class="clearable-input"><input id="productCodePrefix" value="' + esc(prefix) + '" maxlength="20" placeholder="留空表示无前缀" onkeydown="Warehouse.productCodePrefixEnter(event)"><button type="button" aria-label="清空商品编号前缀" title="设为无前缀" onclick="Warehouse.clearProductCodePrefix()">×</button></span></label><div class="prefix-preview"><span>下一个编号示例</span><strong>' + esc(preview) + '</strong></div><button class="primary prefix-save" onclick="Warehouse.saveProductCodePrefix()">保存前缀</button></div><div id="prefixError"></div></section><section class="setting-section"><div class="setting-section-title"><h2>出库计价方式</h2><p>只影响之后新建的出库单，历史流水不会改变。</p></div><div class="cost-method-grid"><button class="cost-option ' + (method === "weighted" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'weighted\')"><b>移动加权平均</b><span>综合现有库存与每次入库价格，波动较平稳</span><em>常用</em></button><button class="cost-option ' + (method === "fifo" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'fifo\')"><b>先进先出</b><span>优先使用最早批次的入库成本</span><em>FIFO</em></button><button class="cost-option ' + (method === "lastInbound" ? "active" : "") + '" onclick="Warehouse.setCostMethod(\'lastInbound\')"><b>最近入库价</b><span>使用该商品最近一次实际入库单价</span><em>最新</em></button></div></section></div>';
   }
 
   function backupView() {
@@ -721,6 +740,32 @@
       save();
       render();
       toast("之后的出库将使用：" + costMethodLabel(method));
+    },
+    productCodePrefixEnter: function (event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      window.Warehouse.saveProductCodePrefix();
+    },
+    clearProductCodePrefix: function () {
+      var input = document.getElementById("productCodePrefix");
+      if (!input) return;
+      input.value = "";
+      input.focus();
+    },
+    saveProductCodePrefix: function () {
+      var input = document.getElementById("productCodePrefix");
+      if (!input) return;
+      var prefix = input.value.trim();
+      if (prefix.length > 20 || !/^[A-Za-z\u3400-\u9fff]*$/.test(prefix)) {
+        flashFields([input]);
+        return errorAt("prefixError", "前缀只能填写英文或中文，最多 20 个字符；也可以留空表示无前缀。");
+      }
+      if (prefix === productCodePrefix()) return toast("商品编号前缀没有变化。");
+      recordUndo("修改商品编号前缀");
+      state.settings.productCodePrefix = prefix;
+      save();
+      render();
+      toast("商品编号前缀已改为：" + (prefix || "无前缀"));
     },
     nextOnEnter: function (event) {
       if (event.key !== "Enter") return;
@@ -1039,7 +1084,8 @@
       var guessed = productPrefill(prefill.text || "");
       if (!guessed.code) guessed.code = nextProductCode();
       var intro = prefill.source === "inbound" ? "库存中没有找到这个商品。已把入库时填写的内容带入，请补全带 * 的商品资料；按 Enter 可直接建立并入库。" : "带 * 的项目必须填写；编号已自动生成，可清空后改为人工编号。按 Enter 可直接建立商品。";
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal" onkeydown="Warehouse.productModalEnter(event)"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">ZERO 为默认商品编号前缀</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
+      var prefixNote = productCodePrefix() ? productCodePrefix() + " 为当前自动编号前缀" : "当前自动编号无前缀";
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal" onkeydown="Warehouse.productModalEnter(event)"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">' + esc(prefixNote) + '</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
     },
     closeModal: function () {
       pendingProductLine = null;
@@ -1051,7 +1097,7 @@
       var unitInput = document.getElementById("newUnit");
       var minInput = document.getElementById("newMin");
       var name = nameInput.value.trim();
-      var code = codeInput.value.trim().toUpperCase();
+      var code = codeInput.value.trim();
       var unit = unitInput.value.trim();
       var min = Number(minInput.value);
       var missingFields = [];

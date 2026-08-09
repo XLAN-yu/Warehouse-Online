@@ -45,3 +45,5 @@
 @media(max-width:900px){.hero-badge,.hero-search{height:108px;min-height:108px}}
 @media(max-width:700px){.shell{display:block}}
 @media(max-width:600px){.hero-badge,.hero-search{height:100px;min-height:100px}}
+.prefix-setting{display:grid;grid-template-columns:minmax(260px,1.4fr) minmax(190px,.8fr) auto;align-items:end;gap:14px}.prefix-setting .field{margin:0}.prefix-preview{min-height:62px;display:grid;align-content:center;gap:4px;padding:10px 16px;border:1px solid var(--line);border-radius:12px;background:#f7faf8}.prefix-preview span{color:#73837d;font-size:9px;font-weight:800}.prefix-preview strong{font-family:Arial,"Microsoft YaHei",sans-serif;font-size:16px;color:#274a3c;letter-spacing:.04em}.prefix-save{min-height:62px;padding-inline:24px}
+@media(max-width:800px){.prefix-setting{grid-template-columns:1fr}.prefix-save{width:100%}}
