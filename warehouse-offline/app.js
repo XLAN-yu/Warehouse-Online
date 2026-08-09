@@ -295,7 +295,7 @@
   }
 
   function navButton(id, label, glyph) {
-    return '<button class="' + (page === id ? "active" : "") + '" onclick="Warehouse.go(\'' + id + '\')"><span>' + glyph + '</span>' + label + "</button>";
+    return '<button class="' + (page === id ? "active" : "") + '" onclick="Warehouse.go(\'' + id + '\')"><span class="nav-glyph nav-glyph-' + id + '">' + glyph + '</span>' + label + "</button>";
   }
 
   function enhanceDocumentForm() {
@@ -329,12 +329,12 @@
           '<div class="undo-zone"><button class="undo-button" onclick="Warehouse.undoLast()" ' + (lastUndo ? "" : "disabled") + '><span>↶</span><div><strong>撤回上一步</strong><small>' + (lastUndo ? esc(lastUndo.label) : "暂无可撤回操作") + '</small></div></button></div>' +
           '<nav class="nav">' +
             navButton("home", "工作台", "⌂") +
-            navButton("products", "商品资料", "◇") +
+            navButton("products", "商品资料", "") +
             navButton("inbound", "入库登记", "↘") +
             navButton("outbound", "出库登记", "↗") +
             navButton("inventory", "查看库存", "▦") +
             navButton("stocktake", "库存盘点", "✓") +
-            navButton("reports", "库存报表", "▤") +
+            navButton("reports", "库存报表", "") +
             navButton("settings", "设置", "⚙") +
             navButton("backup", "数据备份", "↻") +
           '</nav>' +
@@ -378,7 +378,7 @@
     var value = products.reduce(function (sum, p) { return sum + inventoryValue(p); }, 0);
     return '<div class="stack">' +
       '<section class="hero" onclick="Warehouse.showGuide()" title="点击深绿色边缘查看使用教程" aria-label="点击色块边缘查看使用教程"><div class="hero-badge" onclick="event.stopPropagation()"><b>' + displayDate.getDate() + '</b><strong>' + esc(displayMonth) + '</strong><span>' + esc(displayWeekday) + '</span><small>' + displayDate.getFullYear() + '</small></div><button class="hero-search" onclick="event.stopPropagation();Warehouse.go(\'search\')" aria-label="打开全局搜索"><span>⌕</span><strong>全局搜索</strong><small>供应商 · 商品编号 · 品名 · 拼音首字母</small></button></section>' +
-      '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct">◇</span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
+      '<section class="quick"><button onclick="Warehouse.go(\'products\')"><span class="qicon qproduct" aria-hidden="true"></span><div><strong>商品资料</strong><small>先建立品名、编号与单位</small></div><em>→</em></button><button onclick="Warehouse.go(\'inbound\')"><span class="qicon qin">↘</span><div><strong>商品入库</strong><small>多商品与移动平均价</small></div><em>→</em></button><button onclick="Warehouse.go(\'outbound\')"><span class="qicon qout">↗</span><div><strong>商品出库</strong><small>库存不足立即拦截</small></div><em>→</em></button></section>' +
       '<section class="metrics"><article class="metric"><span>库存商品</span><strong>' + products.length + '<small> 种</small></strong><p>' + fmt(products.reduce(function (s, p) { return s + p.stock; }, 0)) + ' 件在库</p></article><article class="metric"><span>今日入库</span><strong>' + fmt(inQty) + '<small> 件</small></strong><p>离线实时汇总</p></article><article class="metric"><span>今日出库</span><strong>' + fmt(outQty) + '<small> 件</small></strong><p>严格库存校验</p></article><article class="metric"><span>库存预警</span><strong>' + low.length + '<small> 种</small></strong><p>低于或等于最低库存</p></article><article class="metric"><span>库存金额</span><strong style="font-size:19px">' + money(value) + '</strong><p>' + esc(costMethodLabel(state.settings.costMethod)) + '</p></article></section>' +
       '<section class="grid2"><article class="panel"><div class="panel-head"><h2>最近流水</h2><button class="export" onclick="Warehouse.go(\'reports\')">查看报表</button></div>' + activityRows(state.documents.slice(0, 6)) + '</article><article class="panel"><div class="panel-head"><h2>低库存商品</h2><span class="status">' + low.length + ' 种</span></div><div class="warnings">' + (low.length ? low.slice(0, 6).map(function (p) { return '<div><span><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></span><b>' + p.stock + ' / ' + p.min + esc(p.unit) + '</b></div>'; }).join("") : '<div class="empty"><strong>库存状态良好</strong></div>') + '</div></article></section>' +
     '</div>';
