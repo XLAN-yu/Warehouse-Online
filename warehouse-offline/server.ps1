@@ -169,6 +169,7 @@ try {
         "/index.html" = @{ Name = "index.html"; Type = "text/html" }
         "/app.css" = @{ Name = "app.css"; Type = "text/css" }
         "/app.js" = @{ Name = "app.js"; Type = "application/javascript" }
+        "/fflate.min.js" = @{ Name = "fflate.min.js"; Type = "application/javascript" }
       }
 
       if ($method -eq "GET" -and $staticFiles.ContainsKey($path)) {
