@@ -47,6 +47,7 @@ export const products = sqliteTable(
     unit: text("unit").notNull().default("件"),
     status: text("status").notNull().default("normal"),
     minStock: integer("min_stock").notNull().default(0),
+    maxStock: integer("max_stock").notNull().default(0),
     currentStock: integer("current_stock").notNull().default(0),
     averageCostCents: integer("average_cost_cents").notNull().default(0),
     defaultSupplierId: text("default_supplier_id").references(() => suppliers.id),
@@ -59,6 +60,8 @@ export const products = sqliteTable(
     index("idx_products_archived_name").on(table.archivedAt, table.name),
     check("products_current_stock_nonnegative", sql`${table.currentStock} >= 0`),
     check("products_min_stock_nonnegative", sql`${table.minStock} >= 0`),
+    check("products_max_stock_nonnegative", sql`${table.maxStock} >= 0`),
+    check("products_max_stock_not_below_min_stock", sql`${table.maxStock} >= ${table.minStock}`),
   ],
 );
 
@@ -85,6 +88,9 @@ export const documents = sqliteTable(
     purpose: text("purpose").notNull().default(""),
     supplierId: text("supplier_id").references(() => suppliers.id),
     externalRef: text("external_ref").notNull().default(""),
+    customer: text("customer").notNull().default(""),
+    contact: text("contact").notNull().default(""),
+    remark: text("remark").notNull().default(""),
     status: text("status", { enum: ["active", "voided", "replaced"] })
       .notNull()
       .default("active"),
@@ -116,6 +122,7 @@ export const documentItems = sqliteTable(
     countedQuantity: integer("counted_quantity"),
     unitPriceCents: integer("unit_price_cents").notNull().default(0),
     unitCostCents: integer("unit_cost_cents").notNull().default(0),
+    remark: text("remark").notNull().default(""),
     beforeQuantity: integer("before_quantity").notNull().default(0),
     afterQuantity: integer("after_quantity").notNull().default(0),
   },

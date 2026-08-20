@@ -10,6 +10,7 @@ type Page =
   | "inventory"
   | "stocktake"
   | "reports"
+  | "replenishment"
   | "records"
   | "products"
   | "users"
@@ -22,6 +23,7 @@ type Product = {
   unit: string;
   status: string;
   min_stock: number;
+  max_stock?: number;
   current_stock: number;
   average_cost_cents?: number;
   default_supplier_id: string | null;
@@ -39,6 +41,7 @@ type DocumentItem = {
   counted_quantity: number | null;
   unit_price_cents?: number;
   unit_cost_cents?: number;
+  remark?: string;
   before_quantity: number;
   after_quantity: number;
 };
@@ -50,6 +53,9 @@ type WarehouseDocument = {
   supplier_id: string | null;
   supplier_name?: string | null;
   external_ref: string;
+  customer?: string;
+  contact?: string;
+  remark?: string;
   status: "active" | "voided" | "replaced";
   revision_of: string | null;
   operator_name?: string | null;
@@ -82,13 +88,16 @@ type AppData = {
   auditLogs: AuditLog[];
 };
 
-type FormLine = { key: string; productId: string; quantity: string; unitPrice: string };
+type FormLine = { key: string; productId: string; quantity: string; unitPrice: string; remark: string };
 type GuestDocumentPayload = {
   type: "inbound" | "outbound";
   purpose: string;
   supplierName: string;
   externalRef: string;
-  items: Array<{ productId: string; quantity: number; unitPrice: number }>;
+  customer?: string;
+  contact?: string;
+  remark?: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number; remark?: string }>;
 };
 type GuestStocktakePayload = {
   purpose: string;
@@ -97,10 +106,10 @@ type GuestStocktakePayload = {
 
 const PRODUCT_STATUS: Record<string, { label: string; tone: string }> = {
   normal: { label: "正常供货", tone: "green" },
-  ordered: { label: "补货已下单", tone: "blue" },
+  ordered: { label: "补货已下单", tone: "yellow" },
   price_changed: { label: "价格有变动", tone: "orange" },
-  alternate: { label: "启用替代供货", tone: "violet" },
-  paused: { label: "暂停采购", tone: "gray" },
+  alternate: { label: "启用替代供货", tone: "blue" },
+  paused: { label: "暂停采购", tone: "red" },
 };
 
 const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: boolean; guestAllowed?: boolean }> = [
@@ -108,6 +117,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: b
   { page: "inbound", label: "入库登记", glyph: "↘", adminOnly: true, guestAllowed: true },
   { page: "outbound", label: "出库登记", glyph: "↗", adminOnly: true, guestAllowed: true },
   { page: "inventory", label: "查看库存", glyph: "▦" },
+  { page: "replenishment", label: "补货建议", glyph: "＋" },
   { page: "stocktake", label: "库存盘点", glyph: "✓", adminOnly: true, guestAllowed: true },
   { page: "reports", label: "库存报表", glyph: "▤" },
   { page: "records", label: "流水记录", glyph: "≡" },
@@ -488,6 +498,7 @@ function OcrDialog({
           productId: product.id,
           quantity: filtered[0] ?? "1",
           unitPrice: filtered[1] ?? "",
+          remark: "",
         });
       }
       const parsed = {
@@ -544,11 +555,15 @@ function DocumentForm({
       productId: item.product_id,
       quantity: String(item.quantity),
       unitPrice: type === "inbound" ? String((item.unit_price_cents ?? 0) / 100) : "",
-    })) ?? [{ key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "" }];
+      remark: item.remark ?? "",
+    })) ?? [{ key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "", remark: "" }];
   const [lines, setLines] = useState<FormLine[]>(firstLines);
   const [purpose, setPurpose] = useState(editing?.purpose ?? "");
   const [supplier, setSupplier] = useState(editing?.supplier_name ?? "");
   const [reference, setReference] = useState(editing?.external_ref ?? "");
+  const [customer, setCustomer] = useState(editing?.customer ?? "");
+  const [contact, setContact] = useState(editing?.contact ?? "");
+  const [remark, setRemark] = useState(editing?.remark ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showOcr, setShowOcr] = useState(false);
@@ -558,6 +573,7 @@ function DocumentForm({
     setPurpose(editing?.purpose ?? "");
     setSupplier(editing?.supplier_name ?? "");
     setReference(editing?.external_ref ?? "");
+    setCustomer(editing?.customer ?? ""); setContact(editing?.contact ?? ""); setRemark(editing?.remark ?? "");
     setError("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing?.id, type]);
@@ -589,13 +605,16 @@ function DocumentForm({
         purpose,
         supplierName: type === "inbound" ? supplier : "",
         externalRef: type === "inbound" ? reference : "",
-        items: validLines.map((line) => ({ productId: line.productId, quantity: Number(line.quantity), unitPrice: Number(line.unitPrice || 0) })),
+        customer: type === "outbound" ? customer : "",
+        contact: type === "outbound" ? contact : "",
+        remark,
+        items: validLines.map((line) => ({ productId: line.productId, quantity: Number(line.quantity), unitPrice: Number(line.unitPrice || 0), remark: line.remark })),
       };
       const result = data.currentUser.role === "guest"
         ? await onGuestDocument(requestPayload)
         : await apiPost({ action: "create-document", ...requestPayload, revisionOf: editing?.id });
-      setLines([{ key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "" }]);
-      setPurpose(""); setSupplier(""); setReference("");
+      setLines([{ key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "", remark: "" }]);
+      setPurpose(""); setSupplier(""); setReference(""); setCustomer(""); setContact(""); setRemark("");
       await onSaved(`${editing ? "单据已修改" : type === "inbound" ? "入库成功" : "出库成功"}：${String(result.documentNo)}`);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "提交失败。");
@@ -614,13 +633,15 @@ function DocumentForm({
         <div className="form-section-heading"><div><span>01</span><div><h2>单据信息</h2><p>操作人将自动记录为 {data.currentUser.display_name}</p></div></div>{editing && <button type="button" className="text-button" onClick={onCancelEdit}>退出修改</button>}</div>
         <div className={`document-meta-grid ${type}`}>
           {type === "inbound" && <label><span>本次实际供应商</span><input list="supplier-options" value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="选择或输入供应商" /><datalist id="supplier-options">{data.suppliers.map((item) => <option key={item.id} value={item.name} />)}</datalist></label>}
+          {type === "outbound" && <><label><span>客户 <em>选填</em></span><input value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder="客户名称" /></label><label><span>联系方式 <em>选填</em></span><input value={contact} onChange={(event) => setContact(event.target.value)} placeholder="电话或联系人" /></label></>}
           <label><span>用途 <em>{type === "inbound" ? "选填" : "必填"}</em></span><input value={purpose} required={type === "outbound"} onChange={(event) => setPurpose(event.target.value)} placeholder={type === "inbound" ? "例如：常规补货" : "例如：生产领用 / 客户发货"} /></label>
           {type === "inbound" && <label><span>供应商单号 <em>选填</em></span><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="送货单号或订单号" /></label>}
+          <label><span>单据备注 <em>选填</em></span><input value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="补充说明" /></label>
         </div>
         <div className="form-divider" />
-        <div className="form-section-heading"><div><span>02</span><div><h2>商品明细</h2><p>输入部分品名或编号即可联想查找</p></div></div><button type="button" className="small-add-button" onClick={() => setLines((current) => [...current, { key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "" }])}>＋ 添加一行</button></div>
+        <div className="form-section-heading"><div><span>02</span><div><h2>商品明细</h2><p>输入部分品名或编号即可联想查找</p></div></div><button type="button" className="small-add-button" onClick={() => setLines((current) => [...current, { key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "", remark: "" }])}>＋ 添加一行</button></div>
         <div className="line-table">
-          <div className={`line-head ${type}`}><span>商品</span><span>当前库存</span><span>数量</span>{type === "inbound" ? <span>实际单价</span> : <span>计价方式</span>}<span /> </div>
+          <div className={`line-head ${type}`}><span>商品</span><span>当前库存</span><span>数量</span>{type === "inbound" ? <span>实际单价</span> : <span>计价方式</span>}<span>备注</span><span /> </div>
           {lines.map((line, index) => {
             const product = data.products.find((item) => item.id === line.productId);
             return <div className={`line-row ${type}`} key={line.key}>
@@ -628,6 +649,7 @@ function DocumentForm({
               <div className={`stock-cell ${product && Number(line.quantity) > product.current_stock && type === "outbound" ? "danger" : ""}`}>{product ? <><b>{product.current_stock}</b><small>{product.unit}</small></> : "—"}</div>
               <label className="number-input"><input inputMode="numeric" min="1" step="1" value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} placeholder="0" /><span>{product?.unit ?? "件"}</span></label>
               {type === "inbound" ? <label className="number-input price-input"><span>¥</span><input inputMode="decimal" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} placeholder="0.00" /></label> : <div className="cost-rule"><strong>移动平均价</strong>{data.currentUser.role !== "viewer" && product ? <small>当前 {money(product.average_cost_cents)}</small> : <small>提交时自动计算</small>}</div>}
+              <input className="line-remark" value={line.remark} onChange={(event) => updateLine(line.key, { remark: event.target.value })} placeholder="选填备注" />
               <button type="button" className="remove-line" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}>×</button>
             </div>;
           })}
@@ -669,6 +691,23 @@ function InventoryView({ data }: { data: AppData }) {
       </section>
     </div>
   );
+}
+
+function ReplenishmentView({ data }: { data: AppData }) {
+  const suggestions = data.products
+    .map((product) => ({
+      product,
+      max: Math.max(product.min_stock, product.max_stock ?? product.min_stock),
+    }))
+    .filter(({ product, max }) => product.current_stock <= product.min_stock && max > product.current_stock)
+    .map(({ product, max }) => ({ product, quantity: max - product.current_stock }))
+    .sort((a, b) => b.quantity - a.quantity);
+  return <div className="page-stack">
+    <section className="page-heading"><div><p className="eyebrow">库存上下限</p><h1>自动补货建议</h1><p>库存低于或等于最低库存时，建议采购至最高库存；建议数量按各商品单位分别计算。</p></div><div className="heading-stats"><span><small>待补货商品</small><b>{suggestions.length}</b></span></div></section>
+    <section className="panel data-panel">
+      {suggestions.length ? <div className="data-table replenishment-table"><div className="table-head"><span>商品信息</span><span>默认供应商</span><span>供货状态</span><span>当前库存</span><span>最低 / 最高</span><span>建议采购</span></div>{suggestions.map(({ product, quantity }) => <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div><div>{product.default_supplier_name ?? "—"}</div><div><StatusBadge status={product.status} /></div><div className="quantity-cell"><strong>{product.current_stock}</strong><small>{product.unit}</small></div><div>{product.min_stock} / {Math.max(product.min_stock, product.max_stock ?? product.min_stock)} {product.unit}</div><div className="replenish-quantity">+{quantity} {product.unit}</div></div>)}</div> : <EmptyState title="当前无需补货" detail="所有商品均高于最低库存，或尚未设置高于最低库存的补货上限。" />}
+    </section>
+  </div>;
 }
 
 function StocktakeView({ data, onSaved, onGuestStocktake }: { data: AppData; onSaved: (message: string) => Promise<void>; onGuestStocktake: (payload: GuestStocktakePayload) => Promise<{ documentNo: string }> }) {
@@ -791,12 +830,12 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState("");
   const [savingId, setSavingId] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, { status: string; minStock: string; supplier: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { status: string; minStock: string; maxStock: string; supplier: string }>>({});
   const filtered = data.products.filter((product) => `${product.code} ${product.name}`.toLowerCase().includes(query.toLowerCase()));
-  function draft(product: Product) { return drafts[product.id] ?? { status: product.status, minStock: String(product.min_stock), supplier: product.default_supplier_name ?? "" }; }
+  function draft(product: Product) { return drafts[product.id] ?? { status: product.status, minStock: String(product.min_stock), maxStock: String(Math.max(product.min_stock, product.max_stock ?? product.min_stock)), supplier: product.default_supplier_name ?? "" }; }
   async function saveProduct(product: Product) {
     const values = draft(product); setSavingId(product.id);
-    try { await apiPost({ action: "update-product", id: product.id, status: values.status, minStock: Number(values.minStock), defaultSupplierName: values.supplier }); await onRefresh(`${product.name}的资料已更新。`); }
+    try { await apiPost({ action: "update-product", id: product.id, status: values.status, minStock: Number(values.minStock), maxStock: Number(values.maxStock), defaultSupplierName: values.supplier }); await onRefresh(`${product.name}的资料已更新。`); }
     catch (error) { window.alert(error instanceof Error ? error.message : "更新失败。"); }
     finally { setSavingId(""); }
   }
@@ -805,10 +844,11 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
       <section className="page-heading"><div><p className="eyebrow">商品主数据</p><h1>商品资料</h1><p>编号可人工填写或由系统生成；默认供应商可随时调整。</p></div><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></section>
       <section className="panel data-panel">
         <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品" /></label><span className="result-count">{filtered.length} 种商品</span></div>
-        {filtered.length ? <div className="product-admin-list">{filtered.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.supplier !== (product.default_supplier_name ?? ""); return <article key={product.id}>
-          <div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit} · 库存 {product.current_stock}</small></div></div>
+        {filtered.length ? <div className="product-admin-list">{filtered.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.maxStock !== String(Math.max(product.min_stock, product.max_stock ?? product.min_stock)) || values.supplier !== (product.default_supplier_name ?? ""); return <article key={product.id}>
+          <div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit} · 库存范围 {values.minStock}–{values.maxStock}</small></div></div>
           <label><small>供应状态</small><select value={values.status} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, status: event.target.value } }))}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></label>
           <label><small>最低库存</small><input type="number" min="0" step="1" value={values.minStock} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, minStock: event.target.value } }))} /></label>
+          <label><small>最高库存</small><input type="number" min="0" step="1" value={values.maxStock} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, maxStock: event.target.value } }))} /></label>
           <label><small>默认供应商</small><input list="supplier-options-product" value={values.supplier} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, supplier: event.target.value } }))} /></label>
           <button className="save-inline" disabled={!changed || savingId === product.id} onClick={() => void saveProduct(product)}>{savingId === product.id ? "保存中" : "保存"}</button>
         </article>; })}<datalist id="supplier-options-product">{data.suppliers.map((supplier) => <option value={supplier.name} key={supplier.id} />)}</datalist></div> : <EmptyState title="还没有商品资料" detail="新增第一个商品后即可开始入库。" />}
@@ -819,17 +859,17 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
 }
 
 function CreateProductModal({ suppliers, onClose, onCreated }: { suppliers: Supplier[]; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
-  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", status: "normal", defaultSupplier: "", alternates: "" });
+  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", maxStock: "0", status: "normal", defaultSupplier: "", alternates: "" });
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); setError("");
-    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", unit: form.unit, minStock: Number(form.minStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
+    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", unit: form.unit, minStock: Number(form.minStock), maxStock: Number(form.maxStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
     catch (submitError) { setError(submitError instanceof Error ? submitError.message : "新增失败。"); }
     finally { setSaving(false); }
   }
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="modal-card product-modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">商品主数据</p><h2>新增商品</h2></div><button type="button" className="close-button" onClick={onClose}>×</button></div>
-    <div className="code-mode"><button type="button" className={form.codeMode === "auto" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "auto" })}><b>系统生成</b><span>例如 SKU-000001</span></button><button type="button" className={form.codeMode === "manual" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "manual" })}><b>人工填写</b><span>重复编号会被拦截</span></button></div>
-    <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
+    <div className="code-mode"><button type="button" className={form.codeMode === "auto" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "auto" })}><b>系统生成</b><span>例如 ZERO-000001</span></button><button type="button" className={form.codeMode === "manual" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "manual" })}><b>人工填写</b><span>重复编号会被拦截</span></button></div>
+    <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>最高库存</span><input required type="number" min="0" step="1" value={form.maxStock} onChange={(event) => setForm({ ...form, maxStock: event.target.value })} /></label><label className="wide"><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
     {error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving}>{saving ? "正在保存…" : "建立商品"}</button></div>
   </form></div>;
 }
@@ -1013,6 +1053,7 @@ export function WarehouseApp() {
         counted_quantity: null,
         unit_price_cents: payload.type === "inbound" ? priceCents : 0,
         unit_cost_cents: payload.type === "inbound" ? priceCents : oldAverage,
+        remark: source.remark ?? "",
         before_quantity: before,
         after_quantity: after,
       });
@@ -1028,6 +1069,9 @@ export function WarehouseApp() {
       supplier_id: null,
       supplier_name: payload.supplierName || null,
       external_ref: payload.externalRef,
+      customer: payload.customer ?? "",
+      contact: payload.contact ?? "",
+      remark: payload.remark ?? "",
       status: "active",
       revision_of: null,
       operator_name: "访客（演示）",
@@ -1113,6 +1157,7 @@ export function WarehouseApp() {
           {page === "inbound" && <DocumentForm key={`in-${editing?.id ?? "new"}`} type="inbound" data={data} editing={editing} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); navigate("records"); }} onSaved={completeAction} />}
           {page === "outbound" && <DocumentForm key={`out-${editing?.id ?? "new"}`} type="outbound" data={data} editing={editing} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); navigate("records"); }} onSaved={completeAction} />}
           {page === "inventory" && <InventoryView data={data} />}
+          {page === "replenishment" && <ReplenishmentView data={data} />}
           {page === "stocktake" && <StocktakeView data={data} onSaved={async (message) => { if (data.guest) showToast(message); else await refresh(message); }} onGuestStocktake={simulateGuestStocktake} />}
           {page === "reports" && <ReportsView data={data} />}
           {page === "records" && <RecordsView data={data} onRefresh={refresh} onEdit={(document) => { setEditing(document); navigate(document.type === "inbound" ? "inbound" : "outbound"); }} />}

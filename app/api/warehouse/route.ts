@@ -19,6 +19,7 @@ type ProductRow = {
   unit: string;
   status: string;
   min_stock: number;
+  max_stock: number;
   current_stock: number;
   average_cost_cents?: number;
   default_supplier_id: string | null;
@@ -36,6 +37,9 @@ type StoredDocument = {
   supplier_id: string | null;
   supplier_name?: string | null;
   external_ref: string;
+  customer?: string;
+  contact?: string;
+  remark?: string;
   status: "active" | "voided" | "replaced";
   revision_of: string | null;
   operator_user_id: string;
@@ -56,6 +60,7 @@ type StoredItem = {
   counted_quantity: number | null;
   unit_price_cents?: number;
   unit_cost_cents?: number;
+  remark?: string;
   before_quantity: number;
   after_quantity: number;
 };
@@ -65,6 +70,7 @@ type IncomingItem = {
   quantity?: number;
   unitPrice?: number;
   countedQuantity?: number;
+  remark?: string;
 };
 
 type ReplayDocument = StoredDocument & { items: StoredItem[] };
@@ -103,12 +109,12 @@ function guestDemoData(pendingApproval = false) {
     { id: "demo-s3", name: "恒源劳保供应", created_at: at(60, 9, 0) },
   ];
   const products = [
-    { id: "demo-p1", code: "SKU-000001", name: "丁腈防护手套", unit: "盒", status: "normal", min_stock: 30, current_stock: 128, average_cost_cents: 1880, default_supplier_id: "demo-s3", default_supplier_name: "恒源劳保供应", archived_at: null, created_at: at(45, 9, 0), updated_at: at(0, 9, 10) },
-    { id: "demo-p2", code: "SKU-000002", name: "透明封箱胶带", unit: "卷", status: "ordered", min_stock: 40, current_stock: 86, average_cost_cents: 425, default_supplier_id: "demo-s1", default_supplier_name: "华东工业用品", archived_at: null, created_at: at(44, 9, 0), updated_at: at(0, 9, 10) },
-    { id: "demo-p3", code: "SKU-000003", name: "A4复印纸", unit: "箱", status: "ordered", min_stock: 15, current_stock: 12, average_cost_cents: 12800, default_supplier_id: "demo-s2", default_supplier_name: "安捷办公物资", archived_at: null, created_at: at(43, 9, 0), updated_at: at(1, 15, 20) },
-    { id: "demo-p4", code: "SKU-000004", name: "碱性电池 AA", unit: "板", status: "price_changed", min_stock: 20, current_stock: 32, average_cost_cents: 1680, default_supplier_id: "demo-s1", default_supplier_name: "华东工业用品", archived_at: null, created_at: at(42, 9, 0), updated_at: at(2, 11, 40) },
-    { id: "demo-p5", code: "SKU-000005", name: "免洗消毒凝胶", unit: "瓶", status: "alternate", min_stock: 18, current_stock: 18, average_cost_cents: 1290, default_supplier_id: "demo-s3", default_supplier_name: "恒源劳保供应", archived_at: null, created_at: at(41, 9, 0), updated_at: at(0, 10, 35) },
-    { id: "demo-p6", code: "SKU-000006", name: "黑色打印机硒鼓", unit: "支", status: "ordered", min_stock: 8, current_stock: 4, average_cost_cents: 16800, default_supplier_id: "demo-s2", default_supplier_name: "安捷办公物资", archived_at: null, created_at: at(40, 9, 0), updated_at: at(3, 14, 0) },
+    { id: "demo-p1", code: "ZERO-000001", name: "丁腈防护手套", unit: "盒", status: "normal", min_stock: 30, max_stock: 180, current_stock: 128, average_cost_cents: 1880, default_supplier_id: "demo-s3", default_supplier_name: "恒源劳保供应", archived_at: null, created_at: at(45, 9, 0), updated_at: at(0, 9, 10) },
+    { id: "demo-p2", code: "ZERO-000002", name: "透明封箱胶带", unit: "卷", status: "ordered", min_stock: 40, max_stock: 120, current_stock: 86, average_cost_cents: 425, default_supplier_id: "demo-s1", default_supplier_name: "华东工业用品", archived_at: null, created_at: at(44, 9, 0), updated_at: at(0, 9, 10) },
+    { id: "demo-p3", code: "ZERO-000003", name: "A4复印纸", unit: "箱", status: "ordered", min_stock: 15, max_stock: 60, current_stock: 12, average_cost_cents: 12800, default_supplier_id: "demo-s2", default_supplier_name: "安捷办公物资", archived_at: null, created_at: at(43, 9, 0), updated_at: at(1, 15, 20) },
+    { id: "demo-p4", code: "ZERO-000004", name: "碱性电池 AA", unit: "板", status: "price_changed", min_stock: 20, max_stock: 80, current_stock: 32, average_cost_cents: 1680, default_supplier_id: "demo-s1", default_supplier_name: "华东工业用品", archived_at: null, created_at: at(42, 9, 0), updated_at: at(2, 11, 40) },
+    { id: "demo-p5", code: "ZERO-000005", name: "免洗消毒凝胶", unit: "瓶", status: "alternate", min_stock: 18, max_stock: 72, current_stock: 18, average_cost_cents: 1290, default_supplier_id: "demo-s3", default_supplier_name: "恒源劳保供应", archived_at: null, created_at: at(41, 9, 0), updated_at: at(0, 10, 35) },
+    { id: "demo-p6", code: "ZERO-000006", name: "黑色打印机硒鼓", unit: "支", status: "paused", min_stock: 8, max_stock: 32, current_stock: 4, average_cost_cents: 16800, default_supplier_id: "demo-s2", default_supplier_name: "安捷办公物资", archived_at: null, created_at: at(40, 9, 0), updated_at: at(3, 14, 0) },
   ];
   const item = (
     id: string,
@@ -228,10 +234,10 @@ async function resolveSupplier(name: string) {
 async function nextProductCode() {
   const db = getDatabase();
   const row = await db
-    .prepare("SELECT code FROM products WHERE code GLOB 'SKU-[0-9]*' ORDER BY code DESC LIMIT 1")
+    .prepare("SELECT code FROM products WHERE code GLOB 'ZERO-[0-9]*' ORDER BY code DESC LIMIT 1")
     .first<{ code: string }>();
-  const current = row?.code ? Number(row.code.replace("SKU-", "")) || 0 : 0;
-  return `SKU-${String(current + 1).padStart(6, "0")}`;
+  const current = row?.code ? Number(row.code.replace("ZERO-", "")) || 0 : 0;
+  return `ZERO-${String(current + 1).padStart(6, "0")}`;
 }
 
 function documentNumber(type: DocumentType) {
@@ -432,6 +438,7 @@ async function createOrReplaceDocument(
       counted_quantity: null,
       unit_price_cents: unitPrice,
       unit_cost_cents: 0,
+      remark: cleanText(raw.remark, 240),
       before_quantity: 0,
       after_quantity: 0,
     });
@@ -465,6 +472,9 @@ async function createOrReplaceDocument(
     purpose: cleanText(payload.purpose, 160),
     supplier_id: supplierId,
     external_ref: cleanText(payload.externalRef, 100),
+    customer: type === "outbound" ? cleanText(payload.customer, 100) : "",
+    contact: type === "outbound" ? cleanText(payload.contact, 100) : "",
+    remark: cleanText(payload.remark, 240),
     status: "active",
     revision_of: revisionOf,
     operator_user_id: user.id,
@@ -495,8 +505,8 @@ async function createOrReplaceDocument(
     db
       .prepare(
         `INSERT INTO documents
-         (id, document_no, type, purpose, supplier_id, external_ref, status, revision_of, operator_user_id, effective_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+         (id, document_no, type, purpose, supplier_id, external_ref, customer, contact, remark, status, revision_of, operator_user_id, effective_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)` ,
       )
       .bind(
         document.id,
@@ -505,6 +515,9 @@ async function createOrReplaceDocument(
         document.purpose,
         supplierId,
         document.external_ref,
+        document.customer,
+        document.contact,
+        document.remark,
         revisionOf,
         user.id,
         document.effective_at,
@@ -517,10 +530,10 @@ async function createOrReplaceDocument(
       db
         .prepare(
           `INSERT INTO document_items
-           (id, document_id, product_id, quantity, counted_quantity, unit_price_cents, unit_cost_cents, before_quantity, after_quantity)
-           VALUES (?, ?, ?, ?, NULL, ?, 0, 0, 0)`,
+           (id, document_id, product_id, quantity, counted_quantity, unit_price_cents, unit_cost_cents, remark, before_quantity, after_quantity)
+           VALUES (?, ?, ?, ?, NULL, ?, 0, ?, 0, 0)`,
         )
-        .bind(item.id, document.id, item.product_id, item.quantity, item.unit_price_cents ?? 0),
+        .bind(item.id, document.id, item.product_id, item.quantity, item.unit_price_cents ?? 0, item.remark ?? ""),
     );
   }
   for (const product of productsResult.results) {
@@ -729,6 +742,8 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
   const unit = cleanText(payload.unit, 16) || "件";
   const minStock = nonNegativeInteger(payload.minStock);
   if (minStock < 0) throw new Error("最低库存必须是大于或等于 0 的整数。");
+  const maxStock = nonNegativeInteger(payload.maxStock);
+  if (maxStock < minStock) throw new Error("最高库存必须是不低于最低库存的整数。");
   const defaultSupplierName = cleanText(payload.defaultSupplierName, 100);
   const defaultSupplierId = await resolveSupplier(defaultSupplierName);
   const alternateNames = Array.isArray(payload.alternateSuppliers)
@@ -740,8 +755,8 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
     db
       .prepare(
         `INSERT INTO products
-         (id, code, code_source, name, unit, status, min_stock, current_stock, average_cost_cents, default_supplier_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+         (id, code, code_source, name, unit, status, min_stock, max_stock, current_stock, average_cost_cents, default_supplier_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)` ,
       )
       .bind(
         id,
@@ -751,6 +766,7 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
         unit,
         cleanText(payload.status, 40) || "normal",
         minStock,
+        maxStock,
         defaultSupplierId,
         timestamp,
         timestamp,
@@ -780,7 +796,7 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
          (id, entity_type, entity_id, action, before_json, after_json, operator_user_id, created_at)
          VALUES (?, 'product', ?, 'create', '', ?, ?, ?)`,
       )
-      .bind(crypto.randomUUID(), id, JSON.stringify({ code, name, unit, minStock }), user.id, timestamp),
+      .bind(crypto.randomUUID(), id, JSON.stringify({ code, name, unit, minStock, maxStock }), user.id, timestamp),
   );
   try {
     await db.batch(statements);
@@ -801,14 +817,16 @@ async function updateProduct(user: CurrentUser, payload: Record<string, unknown>
   const status = cleanText(payload.status, 40) || before.status;
   const minStock = nonNegativeInteger(payload.minStock);
   if (minStock < 0) throw new Error("最低库存必须是大于或等于 0 的整数。");
+  const maxStock = nonNegativeInteger(payload.maxStock);
+  if (maxStock < minStock) throw new Error("最高库存必须是不低于最低库存的整数。");
   const supplierName = cleanText(payload.defaultSupplierName, 100);
   const supplierId = supplierName ? await resolveSupplier(supplierName) : before.default_supplier_id;
   const timestamp = nowIso();
-  const after = { ...before, status, min_stock: minStock, default_supplier_id: supplierId };
+  const after = { ...before, status, min_stock: minStock, max_stock: maxStock, default_supplier_id: supplierId };
   await db.batch([
     db
-      .prepare("UPDATE products SET status = ?, min_stock = ?, default_supplier_id = ?, updated_at = ? WHERE id = ?")
-      .bind(status, minStock, supplierId, timestamp, id),
+      .prepare("UPDATE products SET status = ?, min_stock = ?, max_stock = ?, default_supplier_id = ?, updated_at = ? WHERE id = ?")
+      .bind(status, minStock, maxStock, supplierId, timestamp, id),
     db
       .prepare(
         `INSERT INTO audit_logs
