@@ -270,6 +270,134 @@ aside nav button em { min-width: 20px; margin-left: auto; padding: 2px 6px; bord
 .loading-screen, .error-screen { min-height: 100dvh; display: grid; place-content: center; justify-items: center; color: #274f44; background: #f2f6f4; text-align: center; }.loading-screen h1, .error-screen h1 { margin: 15px 0 4px; font: 26px Georgia, serif; }.loading-screen p, .error-screen p { max-width: 480px; margin: 0; color: #82918c; font-size: 10px; }.loading-mark { display: flex; gap: 4px; }.loading-mark span { width: 7px; height: 22px; border-radius: 4px; background: #4fa78e; animation: pulse .8s ease infinite alternate; }.loading-mark span:nth-child(2){animation-delay:.15s}.loading-mark span:nth-child(3){animation-delay:.3s}@keyframes pulse{to{height:9px;opacity:.4}}.error-screen > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; color: white; background: #cc5b52; font: 23px Georgia,serif; }.error-screen button { margin-top: 16px; padding: 9px 14px; border: 0; border-radius: 7px; color: white; background: #2e7663; }
 .mobile-overlay { display: none; }
 
+/* 与 Windows 离线版统一的阅读尺度：信息层级更清楚，表单与按钮更易操作。 */
+.app-shell { grid-template-columns: 230px minmax(0, 1fr); }
+.app-shell > aside { padding: 24px 15px 18px; }
+.brand { padding-bottom: 22px; }
+.brand strong { font-size: 17px; }
+.brand small { font-size: 10px; }
+aside nav { margin-top: 14px; }
+aside nav button { min-height: 43px; gap: 11px; padding: 0 12px; font-size: 13px; }
+aside nav button > span { font-size: 17px; }
+.user-mini strong { font-size: 12px; }
+.user-mini small, .system-state { font-size: 10px; }
+
+.top-header { height: 64px; padding: 0 clamp(20px, 3vw, 32px); }
+.top-header small { font-size: 10px; }
+.top-header strong { font-size: 13px; }
+.role-pill { padding: 7px 11px; font-size: 10px; }
+.content-area { max-width: 1420px; padding: 30px; }
+.page-stack { gap: 18px; }
+.guest-banner { min-height: 62px; padding: 11px 14px; }
+.guest-banner strong { font-size: 12px; }
+.guest-banner p, .guest-banner button { font-size: 10px; }
+
+.eyebrow { margin-bottom: 6px; font-size: 10px; }
+.welcome-panel { min-height: 145px; padding: 28px 31px; border-radius: 15px; }
+.welcome-panel h1 { font-size: clamp(34px, 3vw, 44px); }
+.welcome-panel p:last-child { font-size: 11px; }
+.today-block { width: 128px; height: 116px; }
+.today-block span { font-family: "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif; font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.today-block small { font-size: 10px; font-weight: 700; }
+
+.quick-grid { gap: 12px; }
+.quick-card { min-height: 92px; grid-template-columns: 42px 1fr auto; gap: 12px; padding: 15px 17px; border-radius: 12px; }
+.quick-icon { width: 42px; height: 42px; font-size: 20px; }
+.quick-card small { font-size: 10px; }
+.quick-card strong { font-size: 15px; }
+.quick-card p { margin-top: 4px; font-size: 10px; }
+.quick-card i { font-size: 26px; font-weight: 800; }
+
+.metric-grid { gap: 10px; }
+.metric-grid article { min-height: 96px; padding: 14px 17px; border-radius: 11px; }
+.metric-heading { color: #4e625a; font-size: 14px; font-weight: 800; }
+.metric-grid article > strong,
+.metric-grid .money-metric,
+.activity-value b,
+.quantity-cell strong,
+.stock-cell b,
+.book-quantity b,
+.stocktake-counter strong,
+.report-cards strong,
+.heading-stats b { font-family: "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif; font-weight: 800; font-variant-numeric: tabular-nums; }
+.metric-grid article > strong { margin-top: 0; font-size: 28px; }
+.metric-grid article > strong small { font-size: 11px; }
+.metric-grid article > p { margin-top: 0; font-size: 10px; }
+.metric-grid .money-metric { font-size: 23px; }
+
+.panel { border-radius: 13px; }
+.recent-panel, .warning-panel { min-height: 320px; padding: 20px; }
+.panel-heading h2 { font-size: 16px; font-weight: 800; }
+.text-button { font-size: 11px; font-weight: 800; }
+.activity-row { min-height: 60px; grid-template-columns: 38px minmax(0, 1fr) auto; }
+.activity-icon { width: 36px; height: 36px; font-size: 16px; }
+.activity-row strong, .warning-list strong { font-size: 14px; font-weight: 800; }
+.activity-row p, .warning-list span { font-size: 10px; }
+.activity-value b { font-size: 19px; }
+.activity-value small { font-size: 9px; }
+.warning-list button { min-height: 52px; }
+.warning-list b { font-family: "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif; font-size: 17px; font-weight: 800; }
+
+.page-heading { min-height: 76px; }
+.page-heading h1, .page-hero h1 { font-size: 34px; }
+.page-heading p:last-child, .page-hero p:last-child { font-size: 11px; }
+.heading-stats > span { min-width: 105px; padding: 12px 15px; }
+.heading-stats small { font-size: 10px; }
+.heading-stats b { font-size: 23px; }
+.page-hero.compact { min-height: 145px; padding: 28px 31px; }
+.ocr-button { padding: 12px 15px; }
+.ocr-button strong { font-size: 12px; }.ocr-button small { font-size: 9px; }
+
+.document-form, .data-panel { padding: 23px; }
+.form-section-heading h2 { font-size: 18px; font-weight: 900; }
+.form-section-heading p { font-size: 11px; }
+.form-section-heading > div > span { width: 32px; height: 32px; font-size: 12px; }
+.document-meta-grid { gap: 13px; margin-top: 15px; }
+.document-meta-grid label, .modal-form-grid label { gap: 8px; color: #40564e; font-size: 13px; font-weight: 800; }
+.document-meta-grid em, .modal-form-grid em { font-size: 10px; }
+.document-meta-grid input, .modal-form-grid input, .modal-form-grid select { min-height: 43px; padding: 0 11px; font-size: 14px; }
+.small-add-button { min-height: 40px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 800; }
+.line-table { border-width: 2px; border-radius: 11px; }
+.line-head { min-height: 46px; color: #40564e; background: #eaf1ed; font-size: 14px; font-weight: 900; }
+.line-row { min-height: 68px; padding: 10px 13px; }
+.autocomplete > input, .number-input { min-height: 42px; border-color: #cfdcd6; border-radius: 8px; }
+.autocomplete > input, .number-input input { font-size: 14px; }
+.number-input input { height: 40px; }
+.number-input span, .stock-cell small { font-size: 10px; }
+.stock-cell { font-size: 13px; }.stock-cell b { font-size: 20px; }
+.cost-rule strong { font-size: 13px; }.cost-rule small { font-size: 10px; }
+.line-remark { height: 42px; padding: 0 10px; font-size: 13px; }
+.remove-line { width: 28px; height: 28px; font-size: 18px; }
+.document-summary { font-size: 12px; }.document-summary strong { font-size: 18px; }
+.form-error { padding: 12px; font-size: 12px; font-weight: 700; }
+
+.table-toolbar { min-height: 50px; padding-bottom: 16px; }
+.search-box { min-height: 40px; padding: 0 11px; font-size: 12px; }
+.check-filter, .result-count { font-size: 11px; }
+.table-head { min-height: 43px; color: #53665e; background: #eef3f0; font-size: 13px; font-weight: 800; }
+.data-table .table-row, .stocktake-table .table-row { min-height: 72px; padding: 10px 13px; color: #465a52; font-size: 12px; }
+.product-identity > span { width: 40px; height: 40px; font-size: 14px; }
+.product-identity strong { font-size: 14px; font-weight: 800; }.product-identity small { font-size: 10px; }
+.status-badge { padding: 5px 8px; font-size: 10px; font-weight: 700; }
+.quantity-cell strong, .book-quantity b { font-size: 21px; }
+.quantity-cell small, .quantity-cell em { font-size: 10px; }
+.money-cell { font-size: 13px; }
+.count-input { min-height: 42px; }.count-input input { height: 40px; font-size: 14px; }.count-input span { font-size: 10px; }
+
+.primary-button, .secondary-button, .export-button, .save-inline {
+  min-height: 42px; padding: 0 17px; border-radius: 9px; font-size: 12px; font-weight: 800;
+}
+.submit-document { min-width: 170px; min-height: 50px; border-radius: 11px; font-size: 15px; font-weight: 800; }
+.submit-document span { font-size: 18px; }
+.period-tabs button, .filter-tabs button { min-height: 38px; padding: 8px 12px; font-size: 12px; font-weight: 800; }
+.report-cards article { min-height: 115px; padding: 17px; }.report-cards small, .report-cards p { font-size: 10px; }.report-cards strong { font-size: 23px; }
+.report-list > div { min-height: 60px; }.report-list strong, .report-list span, .report-list b { font-size: 12px; }.report-list p, .report-list small { font-size: 10px; }
+.record-list article { min-height: 84px; padding: 13px 15px; }.record-title strong { font-size: 13px; }.record-main p, .record-meta > span { font-size: 10px; }.record-items span, .record-items em, .record-meta button { font-size: 10px; }
+.backup-card { min-height: 150px; padding: 20px; }.backup-card h2 { font-size: 16px; }.backup-card small, .backup-card p, .backup-card em, .backup-card button { font-size: 11px; }
+.retention-note strong, .privacy-note strong { font-size: 12px; }.retention-note p, .privacy-note p { font-size: 10px; }
+.modal-card { padding: 26px; }.modal-heading h2 { font-size: 26px; }.modal-actions { margin-top: 18px; }.upload-zone strong { font-size: 12px; }.upload-zone small, .ocr-progress p, .ocr-raw { font-size: 10px; }
+.toast { padding: 14px 17px; font-size: 12px; }
+
 @media (max-width: 1180px) {
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .data-panel { overflow-x: auto; }
