@@ -13,6 +13,7 @@ type Page =
   | "replenishment"
   | "records"
   | "products"
+  | "settings"
   | "users"
   | "backup";
 
@@ -85,7 +86,10 @@ type AppData = {
   documents: WarehouseDocument[];
   users: WarehouseUser[];
   auditLogs: AuditLog[];
+  statusDefinitions: StatusDefinition[];
 };
+
+type StatusDefinition = { id: string; label: string; color: string; system?: boolean };
 
 type FormLine = { key: string; productId: string; quantity: string; unitPrice: string; remark: string };
 type GuestDocumentPayload = {
@@ -103,13 +107,28 @@ type GuestStocktakePayload = {
   items: Array<{ productId: string; countedQuantity: number }>;
 };
 
-const PRODUCT_STATUS: Record<string, { label: string; tone: string }> = {
-  normal: { label: "正常供货", tone: "green" },
-  ordered: { label: "补货已下单", tone: "yellow" },
-  price_changed: { label: "价格有变动", tone: "orange" },
-  alternate: { label: "启用替代供货", tone: "blue" },
-  paused: { label: "暂停采购", tone: "red" },
-};
+const DEFAULT_STATUS_DEFINITIONS: StatusDefinition[] = [
+  { id: "normal", label: "正常供货", color: "#21875A" },
+  { id: "ordered", label: "补货已下单", color: "#B88900" },
+  { id: "price_changed", label: "价格有变动", color: "#C56A16" },
+  { id: "alternate", label: "启用替代供货", color: "#3377C8" },
+  { id: "paused", label: "暂停采购", color: "#C74C4C" },
+  { id: "pending_stocktake", label: "新增待盘点", color: "#655BC7", system: true },
+];
+
+function statusDefinition(status: string, definitions: StatusDefinition[]) {
+  return definitions.find((item) => item.id === status) ?? definitions.find((item) => item.id === "normal") ?? definitions[0] ?? DEFAULT_STATUS_DEFINITIONS[0];
+}
+
+function statusFill(color: string) {
+  const hex = color.replace("#", "");
+  const values = [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((part) => Number.parseInt(part, 16));
+  return `#${values.map((value) => Math.round(255 * 0.88 + value * 0.12).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function withStatusDefinitions(data: AppData): AppData {
+  return { ...data, statusDefinitions: Array.isArray(data.statusDefinitions) && data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS };
+}
 
 const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: boolean; guestAllowed?: boolean }> = [
   { page: "home", label: "工作台", glyph: "⌂" },
@@ -121,6 +140,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: b
   { page: "reports", label: "库存报表", glyph: "▤" },
   { page: "records", label: "流水记录", glyph: "≡" },
   { page: "products", label: "商品资料", glyph: "◇", adminOnly: true },
+  { page: "settings", label: "设置", glyph: "⚙", adminOnly: true },
   { page: "users", label: "用户权限", glyph: "◎", adminOnly: true },
   { page: "backup", label: "备份与恢复", glyph: "↻", adminOnly: true },
 ];
@@ -187,6 +207,7 @@ function exportExcel(
   documents: WarehouseDocument[],
   includeMoney: boolean,
   filename: string,
+  statusDefinitions: StatusDefinition[] = DEFAULT_STATUS_DEFINITIONS,
 ) {
   const inventoryHeaders = ["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商"];
   if (includeMoney) inventoryHeaders.push("移动平均价", "库存金额");
@@ -197,7 +218,7 @@ function exportExcel(
       product.unit,
       product.current_stock,
       product.min_stock,
-      PRODUCT_STATUS[product.status]?.label ?? product.status,
+      statusDefinition(product.status, statusDefinitions).label,
       product.default_supplier_name ?? "",
     ];
     if (includeMoney) {
@@ -256,9 +277,9 @@ function exportExcel(
   URL.revokeObjectURL(url);
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const item = PRODUCT_STATUS[status] ?? { label: status, tone: "gray" };
-  return <span className={`status-badge ${item.tone}`}>{item.label}</span>;
+function StatusBadge({ status, definitions }: { status: string; definitions: StatusDefinition[] }) {
+  const item = statusDefinition(status, definitions);
+  return <span className="status-badge dynamic-status" style={{ "--status-color": item.color, "--status-fill": statusFill(item.color) } as React.CSSProperties}>{item.label}</span>;
 }
 
 function ProductAutocomplete({
@@ -679,7 +700,7 @@ function InventoryView({ data }: { data: AppData }) {
             const low = product.current_stock <= product.min_stock;
             return <div className={`table-row ${low ? "low-row" : ""}`} key={product.id}>
               <div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div>
-              <div><StatusBadge status={product.status} /></div>
+              <div><StatusBadge status={product.status} definitions={data.statusDefinitions} /></div>
               <div className="quantity-cell"><strong>{number(product.current_stock)}</strong><small>{product.unit}</small>{low && <em>低库存</em>}</div>
               <div>{product.min_stock} {product.unit}</div>
               <div>{product.default_supplier_name ?? "—"}</div>
@@ -699,7 +720,7 @@ function ReplenishmentView({ data }: { data: AppData }) {
   return <div className="page-stack">
     <section className="page-heading"><div><p className="eyebrow">采购辅助</p><h1>补货提醒</h1><p>库存低于或等于最低库存时提醒；采购数量由你按实际需要决定。</p></div><div className="heading-stats"><span><small>待补货商品</small><b>{suggestions.length}</b></span></div></section>
     <section className="panel data-panel">
-      {suggestions.length ? <div className="data-table replenishment-table"><div className="table-head"><span>商品信息</span><span>默认供应商</span><span>供货状态</span><span>当前库存</span><span>最低库存</span><span>提醒</span></div>{suggestions.map((product) => <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div><div>{product.default_supplier_name ?? "—"}</div><div><StatusBadge status={product.status} /></div><div className="quantity-cell"><strong>{product.current_stock}</strong><small>{product.unit}</small></div><div>{product.min_stock} {product.unit}</div><div className="replenish-quantity">需要补货</div></div>)}</div> : <EmptyState title="当前无需补货" detail="所有商品均高于最低库存。" />}
+      {suggestions.length ? <div className="data-table replenishment-table"><div className="table-head"><span>商品信息</span><span>默认供应商</span><span>供货状态</span><span>当前库存</span><span>最低库存</span><span>提醒</span></div>{suggestions.map((product) => <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div><div>{product.default_supplier_name ?? "—"}</div><div><StatusBadge status={product.status} definitions={data.statusDefinitions} /></div><div className="quantity-cell"><strong>{product.current_stock}</strong><small>{product.unit}</small></div><div>{product.min_stock} {product.unit}</div><div className="replenish-quantity">需要补货</div></div>)}</div> : <EmptyState title="当前无需补货" detail="所有商品均高于最低库存。" />}
     </section>
   </div>;
 }
@@ -766,7 +787,7 @@ function ReportsView({ data }: { data: AppData }) {
   const labels = { day: "日报", month: "月报", year: "年报" };
   return (
     <div className="page-stack">
-      <section className="page-heading report-heading"><div><p className="eyebrow">库存汇总</p><h1>库存报表</h1><p>按当前日期快速生成日报、月报或年报。</p></div><button className="export-button" onClick={() => exportExcel(data.products, filtered, data.currentUser.role !== "viewer", `库存${labels[period]}-${new Date().toISOString().slice(0, 10)}.xls`)}>⇩ 导出 Excel</button></section>
+      <section className="page-heading report-heading"><div><p className="eyebrow">库存汇总</p><h1>库存报表</h1><p>按当前日期快速生成日报、月报或年报。</p></div><button className="export-button" onClick={() => exportExcel(data.products, filtered, data.currentUser.role !== "viewer", `库存${labels[period]}-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出 Excel</button></section>
       <div className="period-tabs">{(["day", "month", "year"] as const).map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{labels[item]}</button>)}</div>
       <section className="report-cards">
         <article><span className="report-icon inbound">↘</span><div><small>入库数量</small><strong>{number(inQty)} <em>件</em></strong><p>{inbound.length} 张入库单</p></div>{data.currentUser.role !== "viewer" && <b>{money(inValue)}</b>}</article>
@@ -852,19 +873,19 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
         {!selectedSupplier && <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品" /></label><span className="result-count">{filtered.length} 种商品</span></div>}
         {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><span>供</span><div><strong>{supplier}</strong><small>共 {products.length} 种商品 · 点击查看商品资料</small></div><b>→</b></button>)}</div> : displayed.length ? <div className="product-admin-list">{displayed.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.supplier !== (product.default_supplier_name ?? ""); return <article key={product.id}>
           <div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit} · 最低库存 {values.minStock}</small></div></div>
-          <label><small>供应状态</small><select value={values.status} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, status: event.target.value } }))}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></label>
+          <label><small>供应状态</small><select value={values.status} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, status: event.target.value } }))}>{data.statusDefinitions.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
           <label><small>最低库存</small><input type="number" min="0" step="1" value={values.minStock} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, minStock: event.target.value } }))} /></label>
           <label><small>默认供应商</small><input list="supplier-options-product" value={values.supplier} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, supplier: event.target.value } }))} /></label>
           <button className="save-inline" disabled={!changed || savingId === product.id} onClick={() => void saveProduct(product)}>{savingId === product.id ? "保存中" : "保存"}</button>
         </article>; })}<datalist id="supplier-options-product">{data.suppliers.map((supplier) => <option value={supplier.name} key={supplier.id} />)}</datalist></div> : <EmptyState title={selectedSupplier ? "该供应商暂无商品" : "还没有商品资料"} detail={selectedSupplier ? "请返回供应商分类后选择其他供应商。" : "新增第一个商品后即可开始入库。"} />}
       </section>
-      {showCreate && <CreateProductModal suppliers={data.suppliers} onClose={() => setShowCreate(false)} onCreated={async (message) => { setShowCreate(false); await onRefresh(message); }} />}
+      {showCreate && <CreateProductModal suppliers={data.suppliers} statusDefinitions={data.statusDefinitions} onClose={() => setShowCreate(false)} onCreated={async (message) => { setShowCreate(false); await onRefresh(message); }} />}
     </div>
   );
 }
 
-function CreateProductModal({ suppliers, onClose, onCreated }: { suppliers: Supplier[]; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
-  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", initialStock: "0", status: "normal", defaultSupplier: "", alternates: "" });
+function CreateProductModal({ suppliers, statusDefinitions, onClose, onCreated }: { suppliers: Supplier[]; statusDefinitions: StatusDefinition[]; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
+  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", initialStock: "0", status: statusDefinitions.find((item) => item.id === "normal")?.id ?? statusDefinitions[0]?.id ?? "normal", defaultSupplier: "", alternates: "" });
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); setError("");
@@ -874,9 +895,64 @@ function CreateProductModal({ suppliers, onClose, onCreated }: { suppliers: Supp
   }
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="modal-card product-modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">商品主数据</p><h2>新增商品</h2></div><button type="button" className="close-button" onClick={onClose}>×</button></div>
     <div className="code-mode"><button type="button" className={form.codeMode === "auto" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "auto" })}><b>系统生成</b><span>例如 ZERO-000001</span></button><button type="button" className={form.codeMode === "manual" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "manual" })}><b>人工填写</b><span>重复编号会被拦截</span></button></div>
-    <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>初始库存</span><input required type="number" min="0" step="1" value={form.initialStock} onChange={(event) => setForm({ ...form, initialStock: event.target.value })} /></label><label className="wide"><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
+    <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{statusDefinitions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>初始库存</span><input required type="number" min="0" step="1" value={form.initialStock} onChange={(event) => setForm({ ...form, initialStock: event.target.value })} /></label><label className="wide"><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
     {error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving}>{saving ? "正在保存…" : "建立商品"}</button></div>
   </form></div>;
+}
+
+function SettingsView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
+  const [definitions, setDefinitions] = useState<StatusDefinition[]>(data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDefinitions(data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS);
+  }, [data.statusDefinitions]);
+
+  function update(id: string, patch: Partial<StatusDefinition>) {
+    setDefinitions((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  function add() {
+    const id = `custom_${Date.now().toString(36)}`;
+    setDefinitions((current) => [...current, { id, label: "新状态", color: "#3377C8" }]);
+  }
+
+  function remove(id: string) {
+    const item = definitions.find((entry) => entry.id === id);
+    if (!item || item.system) return;
+    setDefinitions((current) => current.filter((entry) => entry.id !== id));
+  }
+
+  async function save() {
+    const names = definitions.map((item) => item.label.trim());
+    if (!definitions.length || names.some((name) => !name)) return setError("请填写每个状态名称。");
+    if (new Set(names).size !== names.length) return setError("状态名称不能重复。");
+    setSaving(true); setError("");
+    try {
+      await apiPost({ action: "save-status-definitions", statusDefinitions: definitions.map((item) => ({ ...item, label: item.label.trim() })) });
+      await onRefresh("商品状态设置已保存。");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "保存失败，请重试。");
+    } finally { setSaving(false); }
+  }
+
+  return <div className="page-stack">
+    <section className="page-heading"><div><p className="eyebrow">业务规则</p><h1>设置</h1><p>可按业务需要新增、改名或移除商品状态，并为每种状态选择提示颜色。</p></div></section>
+    <section className="panel settings-panel">
+      <div className="panel-heading"><div><p className="eyebrow">商品状态</p><h2>状态与颜色</h2></div><button className="secondary-button" onClick={add}>＋ 新增状态</button></div>
+      <div className="status-settings-list">
+        {definitions.map((item) => <article key={item.id}>
+          <span className="status-color-preview" style={{ backgroundColor: item.color }} />
+          <label><small>状态名称</small><input value={item.label} maxLength={20} onChange={(event) => update(item.id, { label: event.target.value })} /></label>
+          <label className="color-control"><small>显示颜色</small><span><input type="color" value={item.color} onChange={(event) => update(item.id, { color: event.target.value })} /><b>{item.color.toUpperCase()}</b></span></label>
+          {item.system ? <em>系统状态</em> : <button className="danger-text" onClick={() => remove(item.id)}>移除</button>}
+        </article>)}
+      </div>
+      {error && <div className="form-error"><span>!</span>{error}</div>}
+      <div className="settings-actions"><p>“新增待盘点”是配方导入后自动使用的系统状态，不能移除。</p><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? "正在保存…" : "保存状态设置"}</button></div>
+    </section>
+  </div>;
 }
 
 function UsersView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
@@ -980,7 +1056,7 @@ function BackupView({ data, onRefresh }: { data: AppData; onRefresh: (message: s
     catch (error) { window.alert(error instanceof Error ? error.message : "恢复失败，请检查备份文件。"); }
     finally { setBusy(""); if (restoreInput.current) restoreInput.current.value = ""; }
   }
-  return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">数据安全</p><h1>备份与恢复</h1><p>每周保存到你选择的 Windows 文件夹，并自动清理超过 30 天的旧备份。</p></div></section><section className="backup-grid"><article className="backup-card featured"><span className="backup-icon">↻</span><div><small>每周自动备份</small><h2>{folder ? "本机文件夹已连接" : "连接本机备份文件夹"}</h2><p>{folder ? `保存位置：${folder}。浏览器打开网站时会检查并执行到期备份。` : "首次选择文件夹并授权后，网站才能定期写入备份文件。"}</p>{lastBackup && <em>上次备份：{dateTime(lastBackup)}</em>}</div><button disabled={!supportsFolder || busy === "folder"} onClick={() => void connectFolder()}>{busy === "folder" ? "正在连接…" : folder ? "更换文件夹" : supportsFolder ? "选择文件夹" : "当前浏览器不支持"}</button></article><article className="backup-card"><span className="backup-icon">⇩</span><div><small>立即保存</small><h2>手动下载备份</h2><p>下载完整 JSON 备份到当前电脑，可用于恢复。</p></div><button disabled={busy === "backup"} onClick={() => void manualBackup()}>{busy === "backup" ? "正在生成…" : "下载备份"}</button></article><article className="backup-card"><span className="backup-icon">▤</span><div><small>业务数据</small><h2>全量 Excel 导出</h2><p>包含全部库存和流水；金额仅管理员可导出。</p></div><button onClick={() => exportExcel(data.products, data.documents, true, `仓库全量数据-${new Date().toISOString().slice(0, 10)}.xls`)}>导出 Excel</button></article><article className="backup-card warning"><span className="backup-icon">↑</span><div><small>谨慎操作</small><h2>从备份恢复</h2><p>恢复前会再次确认，现有历史不会被无提示覆盖。</p></div><button disabled={busy === "restore"} onClick={() => restoreInput.current?.click()}>{busy === "restore" ? "正在恢复…" : "选择备份文件"}</button><input ref={restoreInput} hidden type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void restore(file); }} /></article></section><section className="retention-note"><span>i</span><div><strong>备份策略</strong><p>自动备份间隔 7 天，保留最近 30 天；手动下载的文件由你自行保管。建议使用 Edge 或 Chrome 并保持文件夹授权。</p></div></section></div>;
+  return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">数据安全</p><h1>备份与恢复</h1><p>每周保存到你选择的 Windows 文件夹，并自动清理超过 30 天的旧备份。</p></div></section><section className="backup-grid"><article className="backup-card featured"><span className="backup-icon">↻</span><div><small>每周自动备份</small><h2>{folder ? "本机文件夹已连接" : "连接本机备份文件夹"}</h2><p>{folder ? `保存位置：${folder}。浏览器打开网站时会检查并执行到期备份。` : "首次选择文件夹并授权后，网站才能定期写入备份文件。"}</p>{lastBackup && <em>上次备份：{dateTime(lastBackup)}</em>}</div><button disabled={!supportsFolder || busy === "folder"} onClick={() => void connectFolder()}>{busy === "folder" ? "正在连接…" : folder ? "更换文件夹" : supportsFolder ? "选择文件夹" : "当前浏览器不支持"}</button></article><article className="backup-card"><span className="backup-icon">⇩</span><div><small>立即保存</small><h2>手动下载备份</h2><p>下载完整 JSON 备份到当前电脑，可用于恢复。</p></div><button disabled={busy === "backup"} onClick={() => void manualBackup()}>{busy === "backup" ? "正在生成…" : "下载备份"}</button></article><article className="backup-card"><span className="backup-icon">▤</span><div><small>业务数据</small><h2>全量 Excel 导出</h2><p>包含全部库存和流水；金额仅管理员可导出。</p></div><button onClick={() => exportExcel(data.products, data.documents, true, `仓库全量数据-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>导出 Excel</button></article><article className="backup-card warning"><span className="backup-icon">↑</span><div><small>谨慎操作</small><h2>从备份恢复</h2><p>恢复前会再次确认，现有历史不会被无提示覆盖。</p></div><button disabled={busy === "restore"} onClick={() => restoreInput.current?.click()}>{busy === "restore" ? "正在恢复…" : "选择备份文件"}</button><input ref={restoreInput} hidden type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void restore(file); }} /></article></section><section className="retention-note"><span>i</span><div><strong>备份策略</strong><p>自动备份间隔 7 天，保留最近 30 天；手动下载的文件由你自行保管。建议使用 Edge 或 Chrome 并保持文件夹授权。</p></div></section></div>;
 }
 
 export function WarehouseApp() {
@@ -998,8 +1074,9 @@ export function WarehouseApp() {
   }, []);
 
   const saveGuestData = useCallback((next: AppData) => {
-    setData(next);
-    localStorage.setItem("warehouse-guest-demo-v1", JSON.stringify(next));
+    const normalized = withStatusDefinitions(next);
+    setData(normalized);
+    localStorage.setItem("warehouse-guest-demo-v1", JSON.stringify(normalized));
   }, []);
 
   const refresh = useCallback(async (message?: string) => {
@@ -1012,11 +1089,11 @@ export function WarehouseApp() {
         try {
           const parsed = JSON.parse(stored) as AppData;
           if (parsed.guest && Array.isArray(parsed.products) && Array.isArray(parsed.documents)) {
-            setData({ ...parsed, pendingApproval: result.pendingApproval, currentUser: result.currentUser });
-          } else setData(result);
-        } catch { setData(result); }
-      } else setData(result);
-    } else setData(result);
+            setData(withStatusDefinitions({ ...parsed, pendingApproval: result.pendingApproval, currentUser: result.currentUser }));
+          } else setData(withStatusDefinitions(result));
+        } catch { setData(withStatusDefinitions(result)); }
+      } else setData(withStatusDefinitions(result));
+    } else setData(withStatusDefinitions(result));
     if (message) showToast(message);
   }, [showToast]);
 
@@ -1167,6 +1244,7 @@ export function WarehouseApp() {
           {page === "reports" && <ReportsView data={data} />}
           {page === "records" && <RecordsView data={data} onRefresh={refresh} onEdit={(document) => { setEditing(document); navigate(document.type === "inbound" ? "inbound" : "outbound"); }} />}
           {page === "products" && <ProductsView data={data} onRefresh={refresh} />}
+          {page === "settings" && <SettingsView data={data} onRefresh={refresh} />}
           {page === "users" && <UsersView data={data} onRefresh={refresh} />}
           {page === "backup" && <BackupView data={data} onRefresh={refresh} />}
         </div>

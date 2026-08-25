@@ -5,6 +5,45 @@ export const dynamic = "force-dynamic";
 type Role = "admin" | "viewer" | "pending";
 type DocumentType = "inbound" | "outbound" | "stocktake";
 
+type StatusDefinition = { id: string; label: string; color: string; system?: boolean };
+
+const DEFAULT_STATUS_DEFINITIONS: StatusDefinition[] = [
+  { id: "normal", label: "正常供货", color: "#21875A" },
+  { id: "ordered", label: "补货已下单", color: "#B88900" },
+  { id: "price_changed", label: "价格有变动", color: "#C56A16" },
+  { id: "alternate", label: "启用替代供货", color: "#3377C8" },
+  { id: "paused", label: "暂停采购", color: "#C74C4C" },
+  { id: "pending_stocktake", label: "新增待盘点", color: "#655BC7", system: true },
+];
+
+function validHexColor(value: unknown) {
+  return /^#[0-9a-f]{6}$/i.test(String(value ?? "").trim());
+}
+
+function normalizeStatusDefinitions(value: unknown): StatusDefinition[] {
+  const seen = new Set<string>();
+  const items = Array.isArray(value)
+    ? value.map((item) => {
+        const record = item as Partial<StatusDefinition>;
+        const id = cleanText(record.id, 40).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        const label = cleanText(record.label, 20);
+        const color = String(record.color ?? "").trim();
+        if (!id || !label || !validHexColor(color) || seen.has(id)) return null;
+        seen.add(id);
+        return { id, label, color, system: id === "pending_stocktake" };
+      }).filter((item): item is StatusDefinition => Boolean(item))
+    : [];
+  const definitions = items.length ? items : DEFAULT_STATUS_DEFINITIONS.map((item) => ({ ...item }));
+  if (!definitions.some((item) => item.id === "pending_stocktake")) definitions.push({ ...DEFAULT_STATUS_DEFINITIONS[5] });
+  return definitions;
+}
+
+async function listStatusDefinitions() {
+  const row = await getDatabase().prepare("SELECT value FROM system_settings WHERE key = 'product_status_definitions'").first<{ value: string }>();
+  try { return normalizeStatusDefinitions(row ? JSON.parse(row.value) : null); }
+  catch { return normalizeStatusDefinitions(null); }
+}
+
 type CurrentUser = {
   id: string;
   email: string;
@@ -144,6 +183,7 @@ function guestDemoData(pendingApproval = false) {
     documents,
     users: [],
     auditLogs: [],
+    statusDefinitions: DEFAULT_STATUS_DEFINITIONS,
     backupPolicy: { intervalDays: 7, retentionDays: 30, location: "local-folder" },
   };
 }
@@ -341,7 +381,7 @@ async function nextInventoryRevision() {
 
 async function listBootstrap(user: CurrentUser) {
   const db = getDatabase();
-  const [productResult, supplierResult, documentResult, itemResult, userResult, auditResult] =
+  const [productResult, supplierResult, documentResult, itemResult, userResult, auditResult, statusDefinitions] =
     await Promise.all([
       db
         .prepare(
@@ -372,6 +412,7 @@ async function listBootstrap(user: CurrentUser) {
       user.role === "admin"
         ? db.prepare("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100").all()
         : Promise.resolve({ results: [] }),
+      listStatusDefinitions(),
     ]);
 
   const itemsByDocument = new Map<string, StoredItem[]>();
@@ -403,6 +444,7 @@ async function listBootstrap(user: CurrentUser) {
     })),
     users: userResult.results,
     auditLogs: auditResult.results,
+    statusDefinitions,
     backupPolicy: { intervalDays: 7, retentionDays: 30, location: "local-folder" },
   };
 }
@@ -735,6 +777,7 @@ async function voidDocument(user: CurrentUser, documentId: string) {
 async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
   requireAdmin(user);
   const db = getDatabase();
+  const statusDefinitions = await listStatusDefinitions();
   const name = cleanText(payload.name, 100);
   if (!name) throw new Error("请填写商品名称。");
   const manualCode = cleanText(payload.code, 40).toUpperCase();
@@ -753,6 +796,8 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
     : [];
   const id = crypto.randomUUID();
   const timestamp = nowIso();
+  const requestedStatus = cleanText(payload.status, 40);
+  const status = statusDefinitions.some((item) => item.id === requestedStatus) ? requestedStatus : "normal";
   const statements = [
     db
       .prepare(
@@ -766,7 +811,7 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
         manualCode ? "manual" : "auto",
         name,
         unit,
-        cleanText(payload.status, 40) || "normal",
+        status,
         minStock,
         maxStock,
         initialStock,
@@ -841,7 +886,9 @@ async function updateProduct(user: CurrentUser, payload: Record<string, unknown>
   const id = cleanText(payload.id, 80);
   const before = await db.prepare("SELECT * FROM products WHERE id = ?").bind(id).first<ProductRow>();
   if (!before) throw new Error("商品不存在。");
-  const status = cleanText(payload.status, 40) || before.status;
+  const statusDefinitions = await listStatusDefinitions();
+  const requestedStatus = cleanText(payload.status, 40) || before.status;
+  const status = statusDefinitions.some((item) => item.id === requestedStatus) ? requestedStatus : "normal";
   const minStock = nonNegativeInteger(payload.minStock);
   if (minStock < 0) throw new Error("最低库存必须是大于或等于 0 的整数。");
   // 旧版数据库仍保留最高库存列；更新最低库存时一并抬高该兼容值，避免旧约束阻断保存。
@@ -900,6 +947,28 @@ async function setRole(user: CurrentUser, payload: Record<string, unknown>) {
       ),
   ]);
   return { ok: true };
+}
+
+async function saveStatusDefinitions(user: CurrentUser, payload: Record<string, unknown>) {
+  requireAdmin(user);
+  const supplied = Array.isArray(payload.statusDefinitions) ? payload.statusDefinitions : [];
+  if (!supplied.length) throw new Error("请至少保留一个商品状态。");
+  if (supplied.length > 20) throw new Error("商品状态最多可设置 20 个。");
+  const definitions = normalizeStatusDefinitions(payload.statusDefinitions);
+  if (definitions.length < supplied.length) throw new Error("状态名称、编号或颜色格式不正确，请检查后重试。");
+  const ids = definitions.map((item) => item.id);
+  if (new Set(ids).size !== definitions.length) throw new Error("商品状态编号不能重复。");
+  const db = getDatabase();
+  const fallback = definitions.some((item) => item.id === "normal") ? "normal" : definitions[0].id;
+  const productResult = await db.prepare("SELECT id, status FROM products WHERE archived_at IS NULL").all<{ id: string; status: string }>();
+  const timestamp = nowIso();
+  const statements = [
+    db.prepare("INSERT INTO system_settings (key, value, updated_at) VALUES ('product_status_definitions', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").bind(JSON.stringify(definitions), timestamp),
+    ...productResult.results.filter((product) => !ids.includes(product.status)).map((product) => db.prepare("UPDATE products SET status = ?, updated_at = ? WHERE id = ?").bind(fallback, timestamp, product.id)),
+    db.prepare("INSERT INTO audit_logs (id, entity_type, entity_id, action, before_json, after_json, operator_user_id, created_at) VALUES (?, 'settings', 'product_status_definitions', 'update', '', ?, ?, ?)").bind(crypto.randomUUID(), JSON.stringify(definitions), user.id, timestamp),
+  ];
+  await db.batch(statements);
+  return { statusDefinitions: definitions };
 }
 
 async function createBackup(user: CurrentUser) {
@@ -1007,6 +1076,7 @@ export async function POST(request: Request) {
     else if (action === "update-product") result = await updateProduct(user, payload);
     else if (action === "create-document") result = await createOrReplaceDocument(user, payload);
     else if (action === "stocktake") result = await createStocktake(user, payload);
+    else if (action === "save-status-definitions") result = await saveStatusDefinitions(user, payload);
     else if (action === "void-document") {
       result = await voidDocument(user, cleanText(payload.documentId, 80));
     } else if (action === "set-role") result = await setRole(user, payload);
