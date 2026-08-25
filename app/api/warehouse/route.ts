@@ -6,6 +6,8 @@ type Role = "admin" | "viewer" | "pending";
 type DocumentType = "inbound" | "outbound" | "stocktake";
 
 type StatusDefinition = { id: string; label: string; color: string; system?: boolean };
+type RecipeComponent = { productId: string; quantity: number; shelfLocation: string; supplier: string; remark: string };
+type Recipe = { id: string; name: string; components: RecipeComponent[]; createdAt: string; updatedAt: string };
 
 const DEFAULT_STATUS_DEFINITIONS: StatusDefinition[] = [
   { id: "normal", label: "正常供货", color: "#21875A" },
@@ -42,6 +44,43 @@ async function listStatusDefinitions() {
   const row = await getDatabase().prepare("SELECT value FROM system_settings WHERE key = 'product_status_definitions'").first<{ value: string }>();
   try { return normalizeStatusDefinitions(row ? JSON.parse(row.value) : null); }
   catch { return normalizeStatusDefinitions(null); }
+}
+
+function normalizeRecipes(value: unknown): Recipe[] {
+  if (!Array.isArray(value)) return [];
+  const usedNames = new Set<string>();
+  return value.map((raw) => {
+    const record = raw as Partial<Recipe>;
+    const name = cleanText(record.name, 100);
+    const components = Array.isArray(record.components) ? record.components.map((rawComponent) => {
+      const component = rawComponent as Partial<RecipeComponent>;
+      return {
+        productId: cleanText(component.productId, 80),
+        quantity: positiveInteger(component.quantity),
+        shelfLocation: cleanText(component.shelfLocation, 80),
+        supplier: cleanText(component.supplier, 100),
+        remark: cleanText(component.remark, 240),
+      };
+    }).filter((component) => component.productId && component.quantity > 0) : [];
+    const normalizedName = name.toLocaleLowerCase("zh-CN");
+    if (!name || !components.length || usedNames.has(normalizedName)) return null;
+    usedNames.add(normalizedName);
+    const componentIds = new Set<string>();
+    if (components.some((component) => componentIds.has(component.productId) || !componentIds.add(component.productId))) return null;
+    return {
+      id: cleanText(record.id, 80) || crypto.randomUUID(),
+      name,
+      components,
+      createdAt: cleanText(record.createdAt, 40) || nowIso(),
+      updatedAt: cleanText(record.updatedAt, 40) || nowIso(),
+    };
+  }).filter((recipe): recipe is Recipe => Boolean(recipe));
+}
+
+async function listRecipes() {
+  const row = await getDatabase().prepare("SELECT value FROM system_settings WHERE key = 'product_recipes'").first<{ value: string }>();
+  try { return normalizeRecipes(row ? JSON.parse(row.value) : null); }
+  catch { return []; }
 }
 
 type CurrentUser = {
@@ -184,6 +223,7 @@ function guestDemoData(pendingApproval = false) {
     users: [],
     auditLogs: [],
     statusDefinitions: DEFAULT_STATUS_DEFINITIONS,
+    recipes: [{ id: "demo-r1", name: "办公补给包", createdAt: at(30, 9, 0), updatedAt: at(30, 9, 0), components: [{ productId: "demo-p1", quantity: 1, shelfLocation: "A-01", supplier: "恒源劳保供应", remark: "" }, { productId: "demo-p2", quantity: 2, shelfLocation: "B-03", supplier: "华东工业用品", remark: "" }] }],
     backupPolicy: { intervalDays: 7, retentionDays: 30, location: "local-folder" },
   };
 }
@@ -381,7 +421,7 @@ async function nextInventoryRevision() {
 
 async function listBootstrap(user: CurrentUser) {
   const db = getDatabase();
-  const [productResult, supplierResult, documentResult, itemResult, userResult, auditResult, statusDefinitions] =
+  const [productResult, supplierResult, documentResult, itemResult, userResult, auditResult, statusDefinitions, recipes] =
     await Promise.all([
       db
         .prepare(
@@ -413,6 +453,7 @@ async function listBootstrap(user: CurrentUser) {
         ? db.prepare("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100").all()
         : Promise.resolve({ results: [] }),
       listStatusDefinitions(),
+      listRecipes(),
     ]);
 
   const itemsByDocument = new Map<string, StoredItem[]>();
@@ -445,6 +486,7 @@ async function listBootstrap(user: CurrentUser) {
     users: userResult.results,
     auditLogs: auditResult.results,
     statusDefinitions,
+    recipes,
     backupPolicy: { intervalDays: 7, retentionDays: 30, location: "local-folder" },
   };
 }
@@ -971,6 +1013,42 @@ async function saveStatusDefinitions(user: CurrentUser, payload: Record<string, 
   return { statusDefinitions: definitions };
 }
 
+async function saveRecipes(user: CurrentUser, payload: Record<string, unknown>) {
+  requireAdmin(user);
+  const supplied = Array.isArray(payload.recipes) ? payload.recipes : [];
+  if (supplied.length > 100) throw new Error("产品配方最多可保存 100 个。");
+  const recipes = normalizeRecipes(supplied);
+  if (recipes.length !== supplied.length) throw new Error("配方名称或配件填写不正确；同一配方不能重复使用同一种配件。");
+  const products = await getDatabase().prepare("SELECT id FROM products WHERE archived_at IS NULL").all<{ id: string }>();
+  const ids = new Set(products.results.map((product) => product.id));
+  if (recipes.some((recipe) => recipe.components.some((component) => !ids.has(component.productId)))) {
+    throw new Error("配方中包含已移除的商品，请重新选择配件。 ");
+  }
+  const timestamp = nowIso();
+  const db = getDatabase();
+  await db.batch([
+    db.prepare("INSERT INTO system_settings (key, value, updated_at) VALUES ('product_recipes', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").bind(JSON.stringify(recipes), timestamp),
+    db.prepare("INSERT INTO audit_logs (id, entity_type, entity_id, action, before_json, after_json, operator_user_id, created_at) VALUES (?, 'recipe', 'all', 'save', '', ?, ?, ?)").bind(crypto.randomUUID(), JSON.stringify(recipes), user.id, timestamp),
+  ]);
+  return { recipes };
+}
+
+async function orderRecipe(user: CurrentUser, payload: Record<string, unknown>) {
+  requireAdmin(user);
+  const recipeId = cleanText(payload.recipeId, 80);
+  const quantity = positiveInteger(payload.quantity);
+  if (!recipeId || quantity < 1) throw new Error("下单数量必须是大于 0 的整数。 ");
+  const recipe = (await listRecipes()).find((item) => item.id === recipeId);
+  if (!recipe) throw new Error("产品配方不存在，请刷新后重试。 ");
+  const result = await createOrReplaceDocument(user, {
+    type: "outbound",
+    purpose: `一键配料下单：${recipe.name} × ${quantity}`,
+    remark: "按产品配方自动扣减配件库存",
+    items: recipe.components.map((component) => ({ productId: component.productId, quantity: component.quantity * quantity, remark: component.remark })),
+  });
+  return { ...result, recipeName: recipe.name };
+}
+
 async function createBackup(user: CurrentUser) {
   requireAdmin(user);
   const db = getDatabase();
@@ -1077,6 +1155,8 @@ export async function POST(request: Request) {
     else if (action === "create-document") result = await createOrReplaceDocument(user, payload);
     else if (action === "stocktake") result = await createStocktake(user, payload);
     else if (action === "save-status-definitions") result = await saveStatusDefinitions(user, payload);
+    else if (action === "save-recipes") result = await saveRecipes(user, payload);
+    else if (action === "order-recipe") result = await orderRecipe(user, payload);
     else if (action === "void-document") {
       result = await voidDocument(user, cleanText(payload.documentId, 80));
     } else if (action === "set-role") result = await setRole(user, payload);

@@ -13,6 +13,7 @@ type Page =
   | "replenishment"
   | "records"
   | "products"
+  | "recipes"
   | "settings"
   | "users"
   | "backup";
@@ -87,9 +88,12 @@ type AppData = {
   users: WarehouseUser[];
   auditLogs: AuditLog[];
   statusDefinitions: StatusDefinition[];
+  recipes: Recipe[];
 };
 
 type StatusDefinition = { id: string; label: string; color: string; system?: boolean };
+type RecipeComponent = { productId: string; quantity: number; shelfLocation: string; supplier: string; remark: string };
+type Recipe = { id: string; name: string; components: RecipeComponent[]; createdAt: string; updatedAt: string };
 
 type FormLine = { key: string; productId: string; quantity: string; unitPrice: string; remark: string };
 type GuestDocumentPayload = {
@@ -127,7 +131,11 @@ function statusFill(color: string) {
 }
 
 function withStatusDefinitions(data: AppData): AppData {
-  return { ...data, statusDefinitions: Array.isArray(data.statusDefinitions) && data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS };
+  return {
+    ...data,
+    statusDefinitions: Array.isArray(data.statusDefinitions) && data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS,
+    recipes: Array.isArray(data.recipes) ? data.recipes : [],
+  };
 }
 
 const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: boolean; guestAllowed?: boolean }> = [
@@ -140,6 +148,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: b
   { page: "reports", label: "库存报表", glyph: "▤" },
   { page: "records", label: "流水记录", glyph: "≡" },
   { page: "products", label: "商品资料", glyph: "◇", adminOnly: true },
+  { page: "recipes", label: "一键配料", glyph: "⊞" },
   { page: "settings", label: "设置", glyph: "⚙", adminOnly: true },
   { page: "users", label: "用户权限", glyph: "◎", adminOnly: true },
   { page: "backup", label: "备份与恢复", glyph: "↻", adminOnly: true },
@@ -900,6 +909,72 @@ function CreateProductModal({ suppliers, statusDefinitions, onClose, onCreated }
   </form></div>;
 }
 
+function RecipesView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [showEditor, setShowEditor] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const selected = data.recipes.find((item) => item.id === selectedId);
+  const canEdit = data.currentUser.role === "admin";
+  const productById = useMemo(() => new Map(data.products.map((product) => [product.id, product])), [data.products]);
+  const maximum = (recipe: Recipe) => recipe.components.reduce((limit, component) => {
+    const product = productById.get(component.productId);
+    return Math.min(limit, product ? Math.floor(product.current_stock / component.quantity) : 0);
+  }, Number.MAX_SAFE_INTEGER);
+
+  async function order(quantity: number) {
+    if (!selected || quantity < 1 || !Number.isInteger(quantity)) return;
+    setBusy(true);
+    try {
+      const result = await apiPost({ action: "order-recipe", recipeId: selected.id, quantity });
+      await onRefresh(`已完成一键配料：${selected.name} × ${quantity}（${String(result.documentNo)}）`);
+    } catch (error) { window.alert(error instanceof Error ? error.message : "配料下单失败。 "); }
+    finally { setBusy(false); }
+  }
+
+  async function save(recipe: Recipe) {
+    const exists = data.recipes.some((item) => item.id === recipe.id);
+    const recipes = exists ? data.recipes.map((item) => item.id === recipe.id ? recipe : item) : [...data.recipes, recipe];
+    try { await apiPost({ action: "save-recipes", recipes }); setShowEditor(false); setSelectedId(recipe.id); await onRefresh(`产品配方已保存：${recipe.name}`); }
+    catch (error) { window.alert(error instanceof Error ? error.message : "保存配方失败。 "); }
+  }
+
+  if (selected) {
+    const canOrder = maximum(selected);
+    return <div className="page-stack">
+      <section className="page-heading"><div><button className="secondary-button product-back" onClick={() => setSelectedId("")}>← 返回一键配料</button><p className="eyebrow">产品配方详情</p><h1>{selected.name}</h1></div>{canEdit && <button className="export-button" onClick={() => setShowEditor(true)}>编辑配方</button>}</section>
+      <section className="recipe-order-panel"><div><small>可下单数量</small><strong>{Number.isFinite(canOrder) ? canOrder : 0} 件</strong><p>由库存最少的配件决定</p></div>{canEdit && <RecipeOrderControl disabled={busy || canOrder < 1} onOrder={order} />}</section>
+      <section className="panel recipe-detail-table"><div className="table-head"><span>配件品类</span><span>每件用量</span><span>货架位置</span><span>供应商</span><span>备注</span></div>{selected.components.map((component) => { const product = productById.get(component.productId); return <div className="table-row" key={component.productId}><strong>{product?.name ?? "配件已移除"}</strong><b>{component.quantity}</b><span>{component.shelfLocation || "—"}</span><span>{component.supplier || product?.default_supplier_name || "—"}</span><span>{component.remark || "—"}</span></div>; })}</section>
+      {showEditor && <RecipeEditor products={data.products} recipe={selected} onClose={() => setShowEditor(false)} onSave={save} />}
+    </div>;
+  }
+
+  return <div className="page-stack">
+    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button>}</section>
+    <section className="panel recipe-list">{data.recipes.length ? data.recipes.map((recipe) => <button key={recipe.id} onClick={() => setSelectedId(recipe.id)}><strong>{recipe.name}</strong><span><small>配件种类</small><b>{recipe.components.length} 种</b></span><span><small>可下单</small><b>{maximum(recipe)} 件</b></span></button>) : <EmptyState title="还没有产品配方" detail={canEdit ? "新增产品配方后，即可按配方一键扣减配件库存。" : "请由管理员新增产品配方。"} />}</section>
+    {showEditor && <RecipeEditor products={data.products} onClose={() => setShowEditor(false)} onSave={save} />}
+  </div>;
+}
+
+function RecipeOrderControl({ disabled, onOrder }: { disabled: boolean; onOrder: (quantity: number) => Promise<void> }) {
+  const [quantity, setQuantity] = useState("1");
+  return <div className="recipe-order-control"><label><span>下单产品数量</span><input min="1" step="1" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><button className="primary-button" disabled={disabled} onClick={() => void onOrder(Number(quantity))}>确认下单并扣减配件</button></div>;
+}
+
+function RecipeEditor({ products, recipe, onClose, onSave }: { products: Product[]; recipe?: Recipe; onClose: () => void; onSave: (recipe: Recipe) => Promise<void> }) {
+  const [name, setName] = useState(recipe?.name ?? "");
+  const [components, setComponents] = useState<Array<{ productId: string; quantity: string; shelfLocation: string; supplier: string; remark: string }>>(recipe?.components.map((component) => ({ ...component, quantity: String(component.quantity) })) ?? [{ productId: "", quantity: "1", shelfLocation: "", supplier: "", remark: "" }]);
+  const [error, setError] = useState("");
+  const update = (index: number, patch: Partial<(typeof components)[number]>) => setComponents((current) => current.map((component, componentIndex) => componentIndex === index ? { ...component, ...patch } : component));
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const clean = components.map((component) => ({ ...component, productId: component.productId.trim(), quantity: Number(component.quantity) }));
+    if (!name.trim() || clean.some((component) => !component.productId || !Number.isInteger(component.quantity) || component.quantity < 1)) return setError("请填写产品名称、配件品类和每件用量。 ");
+    if (new Set(clean.map((component) => component.productId)).size !== clean.length) return setError("同一产品配方不能重复选择同一种配件。 ");
+    await onSave({ id: recipe?.id ?? crypto.randomUUID(), name: name.trim(), components: clean, createdAt: recipe?.createdAt ?? new Date().toISOString(), updatedAt: new Date().toISOString() });
+  }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="modal-card recipe-modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">{recipe ? "修改产品配方" : "新建产品配方"}</p><h2>产品配件结构</h2></div><button type="button" className="close-button" onClick={onClose}>×</button></div><label className="recipe-name-field"><span>产品名称 *</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：成套焊机" /></label><div className="recipe-edit-head"><span>配件品类 *</span><span>每件用量 *</span><span>货架位置（选填）</span><span>供应商（选填）</span><span>备注（选填）</span><span /></div><div className="recipe-editor-list">{components.map((component, index) => <div key={index}><select value={component.productId} onChange={(event) => update(index, { productId: event.target.value })}><option value="">选择库存商品</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}（{product.code}）</option>)}</select><input type="number" min="1" step="1" value={component.quantity} onChange={(event) => update(index, { quantity: event.target.value })} /><input value={component.shelfLocation} onChange={(event) => update(index, { shelfLocation: event.target.value })} /><input value={component.supplier} onChange={(event) => update(index, { supplier: event.target.value })} /><input value={component.remark} onChange={(event) => update(index, { remark: event.target.value })} />{components.length > 1 ? <button type="button" onClick={() => setComponents((current) => current.filter((_, componentIndex) => componentIndex !== index))}>×</button> : <span />}</div>)}</div><button type="button" className="secondary-button recipe-add" onClick={() => setComponents((current) => [...current, { productId: "", quantity: "1", shelfLocation: "", supplier: "", remark: "" }])}>＋ 添加配件</button>{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button">保存配方</button></div></form></div>;
+}
+
 function SettingsView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
   const [definitions, setDefinitions] = useState<StatusDefinition[]>(data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS);
   const [saving, setSaving] = useState(false);
@@ -1244,6 +1319,7 @@ export function WarehouseApp() {
           {page === "reports" && <ReportsView data={data} />}
           {page === "records" && <RecordsView data={data} onRefresh={refresh} onEdit={(document) => { setEditing(document); navigate(document.type === "inbound" ? "inbound" : "outbound"); }} />}
           {page === "products" && <ProductsView data={data} onRefresh={refresh} />}
+          {page === "recipes" && <RecipesView data={data} onRefresh={refresh} />}
           {page === "settings" && <SettingsView data={data} onRefresh={refresh} />}
           {page === "users" && <UsersView data={data} onRefresh={refresh} />}
           {page === "backup" && <BackupView data={data} onRefresh={refresh} />}
