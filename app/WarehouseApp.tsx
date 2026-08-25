@@ -23,7 +23,6 @@ type Product = {
   unit: string;
   status: string;
   min_stock: number;
-  max_stock?: number;
   current_stock: number;
   average_cost_cents?: number;
   default_supplier_id: string | null;
@@ -117,7 +116,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: b
   { page: "inbound", label: "入库登记", glyph: "↘", adminOnly: true, guestAllowed: true },
   { page: "outbound", label: "出库登记", glyph: "↗", adminOnly: true, guestAllowed: true },
   { page: "inventory", label: "查看库存", glyph: "▦" },
-  { page: "replenishment", label: "补货建议", glyph: "＋" },
+  { page: "replenishment", label: "补货提醒", glyph: "＋" },
   { page: "stocktake", label: "库存盘点", glyph: "✓", adminOnly: true, guestAllowed: true },
   { page: "reports", label: "库存报表", glyph: "▤" },
   { page: "records", label: "流水记录", glyph: "≡" },
@@ -695,17 +694,12 @@ function InventoryView({ data }: { data: AppData }) {
 
 function ReplenishmentView({ data }: { data: AppData }) {
   const suggestions = data.products
-    .map((product) => ({
-      product,
-      max: Math.max(product.min_stock, product.max_stock ?? product.min_stock),
-    }))
-    .filter(({ product, max }) => product.current_stock <= product.min_stock && max > product.current_stock)
-    .map(({ product, max }) => ({ product, quantity: max - product.current_stock }))
-    .sort((a, b) => b.quantity - a.quantity);
+    .filter((product) => product.current_stock <= product.min_stock)
+    .sort((a, b) => a.current_stock - b.current_stock);
   return <div className="page-stack">
-    <section className="page-heading"><div><p className="eyebrow">库存上下限</p><h1>自动补货建议</h1><p>库存低于或等于最低库存时，建议采购至最高库存；建议数量按各商品单位分别计算。</p></div><div className="heading-stats"><span><small>待补货商品</small><b>{suggestions.length}</b></span></div></section>
+    <section className="page-heading"><div><p className="eyebrow">采购辅助</p><h1>补货提醒</h1><p>库存低于或等于最低库存时提醒；采购数量由你按实际需要决定。</p></div><div className="heading-stats"><span><small>待补货商品</small><b>{suggestions.length}</b></span></div></section>
     <section className="panel data-panel">
-      {suggestions.length ? <div className="data-table replenishment-table"><div className="table-head"><span>商品信息</span><span>默认供应商</span><span>供货状态</span><span>当前库存</span><span>最低 / 最高</span><span>建议采购</span></div>{suggestions.map(({ product, quantity }) => <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div><div>{product.default_supplier_name ?? "—"}</div><div><StatusBadge status={product.status} /></div><div className="quantity-cell"><strong>{product.current_stock}</strong><small>{product.unit}</small></div><div>{product.min_stock} / {Math.max(product.min_stock, product.max_stock ?? product.min_stock)} {product.unit}</div><div className="replenish-quantity">+{quantity} {product.unit}</div></div>)}</div> : <EmptyState title="当前无需补货" detail="所有商品均高于最低库存，或尚未设置高于最低库存的补货上限。" />}
+      {suggestions.length ? <div className="data-table replenishment-table"><div className="table-head"><span>商品信息</span><span>默认供应商</span><span>供货状态</span><span>当前库存</span><span>最低库存</span><span>提醒</span></div>{suggestions.map((product) => <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div><div>{product.default_supplier_name ?? "—"}</div><div><StatusBadge status={product.status} /></div><div className="quantity-cell"><strong>{product.current_stock}</strong><small>{product.unit}</small></div><div>{product.min_stock} {product.unit}</div><div className="replenish-quantity">需要补货</div></div>)}</div> : <EmptyState title="当前无需补货" detail="所有商品均高于最低库存。" />}
     </section>
   </div>;
 }
@@ -830,28 +824,39 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState("");
   const [savingId, setSavingId] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, { status: string; minStock: string; maxStock: string; supplier: string }>>({});
+  const [groupBySupplier, setGroupBySupplier] = useState(() => typeof window !== "undefined" && localStorage.getItem("warehouse-products-group-by-supplier") === "true");
+  const [selectedSupplier, setSelectedSupplier] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { status: string; minStock: string; supplier: string }>>({});
   const filtered = data.products.filter((product) => `${product.code} ${product.name}`.toLowerCase().includes(query.toLowerCase()));
-  function draft(product: Product) { return drafts[product.id] ?? { status: product.status, minStock: String(product.min_stock), maxStock: String(Math.max(product.min_stock, product.max_stock ?? product.min_stock)), supplier: product.default_supplier_name ?? "" }; }
+  function draft(product: Product) { return drafts[product.id] ?? { status: product.status, minStock: String(product.min_stock), supplier: product.default_supplier_name ?? "" }; }
+  function toggleGrouping() {
+    const next = !groupBySupplier;
+    setGroupBySupplier(next); localStorage.setItem("warehouse-products-group-by-supplier", String(next));
+    if (!next) setSelectedSupplier(null);
+  }
   async function saveProduct(product: Product) {
     const values = draft(product); setSavingId(product.id);
-    try { await apiPost({ action: "update-product", id: product.id, status: values.status, minStock: Number(values.minStock), maxStock: Number(values.maxStock), defaultSupplierName: values.supplier }); await onRefresh(`${product.name}的资料已更新。`); }
+    try { await apiPost({ action: "update-product", id: product.id, status: values.status, minStock: Number(values.minStock), defaultSupplierName: values.supplier }); await onRefresh(`${product.name}的资料已更新。`); }
     catch (error) { window.alert(error instanceof Error ? error.message : "更新失败。"); }
     finally { setSavingId(""); }
   }
+  const grouped = filtered.reduce<Record<string, Product[]>>((result, product) => {
+    const supplier = product.default_supplier_name || "未设置供应商";
+    (result[supplier] ??= []).push(product); return result;
+  }, {});
+  const displayed = selectedSupplier ? (grouped[selectedSupplier] ?? []) : filtered;
   return (
     <div className="page-stack">
-      <section className="page-heading"><div><p className="eyebrow">商品主数据</p><h1>商品资料</h1><p>编号可人工填写或由系统生成；默认供应商可随时调整。</p></div><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></section>
+      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">{selectedSupplier ? "供应商商品资料" : "商品主数据"}</p><h1>{selectedSupplier ?? "商品资料"}</h1><p>{selectedSupplier ? `该供应商下共 ${displayed.length} 种商品。` : "编号可人工填写或由系统生成；默认供应商可随时调整。"}</p></div><div className="heading-stats product-heading-actions"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></div></section>
       <section className="panel data-panel">
-        <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品" /></label><span className="result-count">{filtered.length} 种商品</span></div>
-        {filtered.length ? <div className="product-admin-list">{filtered.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.maxStock !== String(Math.max(product.min_stock, product.max_stock ?? product.min_stock)) || values.supplier !== (product.default_supplier_name ?? ""); return <article key={product.id}>
-          <div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit} · 库存范围 {values.minStock}–{values.maxStock}</small></div></div>
+        {!selectedSupplier && <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品" /></label><span className="result-count">{filtered.length} 种商品</span></div>}
+        {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><span>供</span><div><strong>{supplier}</strong><small>共 {products.length} 种商品 · 点击查看商品资料</small></div><b>→</b></button>)}</div> : displayed.length ? <div className="product-admin-list">{displayed.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.supplier !== (product.default_supplier_name ?? ""); return <article key={product.id}>
+          <div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit} · 最低库存 {values.minStock}</small></div></div>
           <label><small>供应状态</small><select value={values.status} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, status: event.target.value } }))}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></label>
           <label><small>最低库存</small><input type="number" min="0" step="1" value={values.minStock} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, minStock: event.target.value } }))} /></label>
-          <label><small>最高库存</small><input type="number" min="0" step="1" value={values.maxStock} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, maxStock: event.target.value } }))} /></label>
           <label><small>默认供应商</small><input list="supplier-options-product" value={values.supplier} onChange={(event) => setDrafts((current) => ({ ...current, [product.id]: { ...values, supplier: event.target.value } }))} /></label>
           <button className="save-inline" disabled={!changed || savingId === product.id} onClick={() => void saveProduct(product)}>{savingId === product.id ? "保存中" : "保存"}</button>
-        </article>; })}<datalist id="supplier-options-product">{data.suppliers.map((supplier) => <option value={supplier.name} key={supplier.id} />)}</datalist></div> : <EmptyState title="还没有商品资料" detail="新增第一个商品后即可开始入库。" />}
+        </article>; })}<datalist id="supplier-options-product">{data.suppliers.map((supplier) => <option value={supplier.name} key={supplier.id} />)}</datalist></div> : <EmptyState title={selectedSupplier ? "该供应商暂无商品" : "还没有商品资料"} detail={selectedSupplier ? "请返回供应商分类后选择其他供应商。" : "新增第一个商品后即可开始入库。"} />}
       </section>
       {showCreate && <CreateProductModal suppliers={data.suppliers} onClose={() => setShowCreate(false)} onCreated={async (message) => { setShowCreate(false); await onRefresh(message); }} />}
     </div>
@@ -859,17 +864,17 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
 }
 
 function CreateProductModal({ suppliers, onClose, onCreated }: { suppliers: Supplier[]; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
-  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", maxStock: "0", status: "normal", defaultSupplier: "", alternates: "" });
+  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", initialStock: "0", status: "normal", defaultSupplier: "", alternates: "" });
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); setError("");
-    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", unit: form.unit, minStock: Number(form.minStock), maxStock: Number(form.maxStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
+    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", unit: form.unit, minStock: Number(form.minStock), initialStock: Number(form.initialStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
     catch (submitError) { setError(submitError instanceof Error ? submitError.message : "新增失败。"); }
     finally { setSaving(false); }
   }
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="modal-card product-modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">商品主数据</p><h2>新增商品</h2></div><button type="button" className="close-button" onClick={onClose}>×</button></div>
     <div className="code-mode"><button type="button" className={form.codeMode === "auto" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "auto" })}><b>系统生成</b><span>例如 ZERO-000001</span></button><button type="button" className={form.codeMode === "manual" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "manual" })}><b>人工填写</b><span>重复编号会被拦截</span></button></div>
-    <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>最高库存</span><input required type="number" min="0" step="1" value={form.maxStock} onChange={(event) => setForm({ ...form, maxStock: event.target.value })} /></label><label className="wide"><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
+    <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{Object.entries(PRODUCT_STATUS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>初始库存</span><input required type="number" min="0" step="1" value={form.initialStock} onChange={(event) => setForm({ ...form, initialStock: event.target.value })} /></label><label className="wide"><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
     {error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving}>{saving ? "正在保存…" : "建立商品"}</button></div>
   </form></div>;
 }

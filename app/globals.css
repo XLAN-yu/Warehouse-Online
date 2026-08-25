@@ -441,3 +441,32 @@ aside nav button > span { font-size: 17px; }
   .guest-banner { align-items: flex-start; flex-wrap: wrap; }
   .guest-banner button { width: 100%; margin-left: 0; }
 }
+
+/* 商品资料：供应商分类与仅保留最低库存后的紧凑布局。 */
+.product-heading-actions { display: flex; align-items: center; gap: 10px; }
+.secondary-button.active-toggle { border-color: #4f9a84; color: #176746; background: #eaf7f2; }
+.product-back { margin-bottom: 10px; }
+.product-admin-list article { grid-template-columns: minmax(230px, 1.45fr) 145px 105px minmax(150px, 1fr) 72px; }
+.data-table.replenishment-table .table-head,
+.data-table.replenishment-table .table-row { grid-template-columns: minmax(230px, 1.3fr) minmax(145px, 1fr) 125px 110px 110px 120px; }
+.supplier-group-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 14px; }
+.supplier-group-card { min-height: 108px; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 13px; padding: 16px; border: 1px solid #dce6e1; border-radius: 12px; color: #2d453c; background: #fff; text-align: left; transition: .16s ease; }
+.supplier-group-card:hover { border-color: #73ad99; background: #f3faf7; box-shadow: 0 10px 24px rgba(23,75,59,.08); transform: translateY(-1px); }
+.supplier-group-card > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 10px; color: #286a58; background: #e8f4f0; font-size: 15px; font-weight: 900; }
+.supplier-group-card > div { min-width: 0; display: grid; gap: 5px; }
+.supplier-group-card strong { overflow: hidden; font-size: 15px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.supplier-group-card small { color: #71817b; font-size: 10px; }
+.supplier-group-card > b { color: #4b786a; font-size: 25px; }
+
+@media (max-width: 920px) {
+  .product-heading-actions { width: 100%; justify-content: flex-start; }
+  .product-admin-list article { grid-template-columns: 1.3fr 1fr 90px; }
+  .product-admin-list article > label:nth-of-type(3) { grid-column: 1 / 3; }
+  .product-admin-list .save-inline { grid-column: 3; }
+}
+
+@media (max-width: 680px) {
+  .product-heading-actions { align-items: stretch; flex-direction: column; }
+  .product-heading-actions button { width: 100%; }
+  .supplier-group-list { grid-template-columns: 1fr; }
+}

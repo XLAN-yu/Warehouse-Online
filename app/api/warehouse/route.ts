@@ -742,8 +742,10 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
   const unit = cleanText(payload.unit, 16) || "件";
   const minStock = nonNegativeInteger(payload.minStock);
   if (minStock < 0) throw new Error("最低库存必须是大于或等于 0 的整数。");
-  const maxStock = nonNegativeInteger(payload.maxStock);
-  if (maxStock < minStock) throw new Error("最高库存必须是不低于最低库存的整数。");
+  const initialStock = nonNegativeInteger(payload.initialStock);
+  if (initialStock < 0) throw new Error("初始库存必须是大于或等于 0 的整数。");
+  // 保留旧列仅为兼容已有数据库约束；界面和业务不再使用最高库存。
+  const maxStock = minStock;
   const defaultSupplierName = cleanText(payload.defaultSupplierName, 100);
   const defaultSupplierId = await resolveSupplier(defaultSupplierName);
   const alternateNames = Array.isArray(payload.alternateSuppliers)
@@ -756,7 +758,7 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
       .prepare(
         `INSERT INTO products
          (id, code, code_source, name, unit, status, min_stock, max_stock, current_stock, average_cost_cents, default_supplier_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)` ,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)` ,
       )
       .bind(
         id,
@@ -767,6 +769,7 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
         cleanText(payload.status, 40) || "normal",
         minStock,
         maxStock,
+        initialStock,
         defaultSupplierId,
         timestamp,
         timestamp,
@@ -789,6 +792,30 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
       );
     }
   }
+  if (initialStock > 0) {
+    const documentId = crypto.randomUUID();
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO documents
+           (id, document_no, type, purpose, supplier_id, external_ref, customer, contact, remark, status, revision_of, operator_user_id, effective_at, created_at, updated_at)
+           VALUES (?, ?, 'inbound', '建立商品时录入初始库存', ?, '', '', '', '', 'active', NULL, ?, ?, ?, ?)`,
+        )
+        .bind(documentId, documentNumber("inbound"), defaultSupplierId, user.id, timestamp, timestamp, timestamp),
+    );
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO document_items
+           (id, document_id, product_id, quantity, counted_quantity, unit_price_cents, unit_cost_cents, remark, before_quantity, after_quantity)
+           VALUES (?, ?, ?, ?, NULL, 0, 0, '', 0, ?)`,
+        )
+        .bind(crypto.randomUUID(), documentId, id, initialStock, initialStock),
+    );
+    statements.push(
+      db.prepare("INSERT INTO inventory_revisions (revision, created_at) VALUES (?, ?)").bind(await nextInventoryRevision(), timestamp),
+    );
+  }
   statements.push(
     db
       .prepare(
@@ -796,7 +823,7 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
          (id, entity_type, entity_id, action, before_json, after_json, operator_user_id, created_at)
          VALUES (?, 'product', ?, 'create', '', ?, ?, ?)`,
       )
-      .bind(crypto.randomUUID(), id, JSON.stringify({ code, name, unit, minStock, maxStock }), user.id, timestamp),
+      .bind(crypto.randomUUID(), id, JSON.stringify({ code, name, unit, minStock, initialStock }), user.id, timestamp),
   );
   try {
     await db.batch(statements);
@@ -817,8 +844,8 @@ async function updateProduct(user: CurrentUser, payload: Record<string, unknown>
   const status = cleanText(payload.status, 40) || before.status;
   const minStock = nonNegativeInteger(payload.minStock);
   if (minStock < 0) throw new Error("最低库存必须是大于或等于 0 的整数。");
-  const maxStock = nonNegativeInteger(payload.maxStock);
-  if (maxStock < minStock) throw new Error("最高库存必须是不低于最低库存的整数。");
+  // 旧版数据库仍保留最高库存列；更新最低库存时一并抬高该兼容值，避免旧约束阻断保存。
+  const maxStock = Math.max(Number(before.max_stock ?? 0), minStock);
   const supplierName = cleanText(payload.defaultSupplierName, 100);
   const supplierId = supplierName ? await resolveSupplier(supplierName) : before.default_supplier_id;
   const timestamp = nowIso();

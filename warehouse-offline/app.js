@@ -21,6 +21,7 @@
   var saveQueue = Promise.resolve();
   var pendingProductLine = null;
   var selectedProductId = null;
+  var selectedSupplier = "";
   var globalQuery = "";
   var importPreviewRows = [];
   var importHistoryRows = { inbound: [], outbound: [] };
@@ -45,21 +46,23 @@
       version: 1,
       products: [],
       documents: [],
-      settings: { fontScale: 1, costMethod: "weighted", productCodePrefix: "ZERO" },
+      settings: { fontScale: 1, costMethod: "weighted", productCodePrefix: "ZERO", supplierGrouping: false },
       undoHistory: []
     };
   }
 
   function normalizeState(value) {
-    if (!value.settings) value.settings = { fontScale: 1, costMethod: "weighted", productCodePrefix: "ZERO" };
+    if (!value.settings) value.settings = { fontScale: 1, costMethod: "weighted", productCodePrefix: "ZERO", supplierGrouping: false };
     if ([1, 1.2, 1.5].indexOf(Number(value.settings.fontScale)) < 0) value.settings.fontScale = 1;
     if (["weighted", "fifo", "lastInbound"].indexOf(value.settings.costMethod) < 0) value.settings.costMethod = "weighted";
     if (typeof value.settings.productCodePrefix !== "string") value.settings.productCodePrefix = "ZERO";
+    value.settings.supplierGrouping = value.settings.supplierGrouping === true;
     if (!Array.isArray(value.undoHistory)) value.undoHistory = [];
     value.products.forEach(function (product) {
       product.archived = product.archived === true;
       product.min = Number.isSafeInteger(Number(product.min)) && Number(product.min) >= 0 ? Number(product.min) : 0;
-      product.max = Number.isSafeInteger(Number(product.max)) && Number(product.max) >= product.min ? Number(product.max) : product.min;
+      // 最高库存不再是商品资料字段；旧数据在下一次保存时自动清理。
+      delete product.max;
       if (!product.createdAt) {
         var relatedDates = value.documents.filter(function (doc) {
           return doc.items.some(function (line) { return line.productId === product.id; });
@@ -296,14 +299,11 @@
   function inventoryValue(product) {
     return inventoryUnitCost(product) * product.stock;
   }
-  function replenishmentQuantity(product) {
-    return product.stock <= product.min ? Math.max(0, product.max - product.stock) : 0;
-  }
   function replenishmentItems() {
-    return activeProducts().map(function (product) { return { product: product, quantity: replenishmentQuantity(product) }; }).filter(function (entry) { return entry.quantity > 0; }).sort(function (a, b) { return b.quantity - a.quantity; });
+    return activeProducts().filter(function (product) { return product.stock <= product.min; }).sort(function (a, b) { return a.stock - b.stock; });
   }
   function pageTitle() {
-    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", "product-history": "商品全周期", search: "全局搜索", stocktake: "库存盘点", replenishment: "补货建议", reports: "库存报表", products: "商品资料", settings: "设置", backup: "数据备份" }[page] || "工作台";
+    return { home: "工作台", inbound: "入库登记", outbound: "出库登记", inventory: "查看库存", "product-history": "商品全周期", "supplier-products": "供应商商品资料", search: "全局搜索", stocktake: "库存盘点", replenishment: "补货提醒", reports: "库存报表", products: "商品资料", settings: "设置", backup: "数据备份" }[page] || "工作台";
   }
 
   var productStatuses = ["正常供货", "补货已下单", "价格有变动", "启用替代供货", "暂停采购"];
@@ -352,7 +352,7 @@
             navButton("outbound", "出库登记", "↗") +
             navButton("inventory", "查看库存", "▦") +
             navButton("stocktake", "库存盘点", "✓") +
-            navButton("replenishment", "补货建议", "↻") +
+            navButton("replenishment", "补货提醒", "↻") +
             navButton("reports", "库存报表", "") +
             navButton("settings", "设置", "⚙") +
             navButton("backup", "数据备份", "↻") +
@@ -375,6 +375,7 @@
     if (page === "inbound" || page === "outbound") return documentView();
     if (page === "inventory") return inventoryView();
     if (page === "product-history") return productHistoryView();
+    if (page === "supplier-products") return supplierProductsView();
     if (page === "search") return globalSearchView();
     if (page === "stocktake") return stocktakeView();
     if (page === "replenishment") return replenishmentView();
@@ -427,8 +428,29 @@
 
   function productsTable(products) {
     return '<div class="table product-master-table"><div class="thead"><span>商品编号</span><span>商品名称</span><span>默认供应商</span><span>状态</span><span>操作</span></div>' + products.map(function (p) {
-      return '<div class="trow"><div class="master-code"><strong>' + esc(p.code) + '</strong></div><div class="master-name"><strong>' + esc(p.name) + '</strong><small>单位：' + esc(p.unit) + ' · 库存范围 ' + p.min + '–' + p.max + '</small></div><div class="master-supplier">' + esc(p.supplier || "未设置供应商") + '</div><div>' + statusSelect(p) + '</div><div class="master-actions"><button class="limit-product" onclick="Warehouse.productLimitsModal(\'' + esc(p.id) + '\')">库存上下限</button><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div></div>';
+      return '<div class="trow"><div class="master-code"><strong>' + esc(p.code) + '</strong></div><div class="master-name"><strong>' + esc(p.name) + '</strong><small>单位：' + esc(p.unit) + ' · 最低库存 ' + p.min + '</small></div><div class="master-supplier">' + esc(p.supplier || "未设置供应商") + '</div><div>' + statusSelect(p) + '</div><div class="master-actions"><button class="limit-product" onclick="Warehouse.productMinimumModal(\'' + esc(p.id) + '\')">最低库存</button><button class="remove-product ' + (p.stock === 0 ? "" : "danger") + '" onclick="Warehouse.removeProduct(\'' + esc(p.id) + '\')">' + (p.stock === 0 ? "移除商品" : "清空并移除") + '</button></div></div>';
     }).join("") + '</div>';
+  }
+
+  function supplierGroupsView() {
+    var groups = Object.create(null);
+    activeProducts().forEach(function (product) {
+      var supplier = product.supplier || "未设置供应商";
+      if (!groups[supplier]) groups[supplier] = [];
+      groups[supplier].push(product);
+    });
+    var suppliers = Object.keys(groups).sort(function (a, b) { return a.localeCompare(b, "zh-Hans-CN"); });
+    if (!suppliers.length) return '<div class="empty"><strong>还没有商品资料</strong><p>新增商品并填写默认供应商后，可按供应商查看。</p></div>';
+    return '<section class="supplier-groups">' + suppliers.map(function (supplier) {
+      var items = groups[supplier];
+      return '<button class="supplier-group-card" onclick="Warehouse.openSupplierProducts(\'' + esc(supplier) + '\')"><span class="supplier-group-icon">供</span><div><strong>' + esc(supplier) + '</strong><small>共 ' + items.length + ' 种商品 · 点击查看商品资料</small></div><b>→</b></button>';
+    }).join("") + '</section>';
+  }
+
+  function supplierProductsView() {
+    var supplier = selectedSupplier || "未设置供应商";
+    var products = activeProducts().filter(function (product) { return (product.supplier || "未设置供应商") === supplier; });
+    return '<div class="stack"><section class="heading"><div><button class="back-link" onclick="Warehouse.go(\'products\')">← 返回商品资料</button><p class="eyebrow">供应商分类</p><h1>' + esc(supplier) + '</h1><p>该供应商下共 ' + products.length + ' 种商品资料。</p></div></section><section class="panel scroll">' + productsTable(products) + '</section></div>';
   }
 
   function productLifecycle(product) {
@@ -535,8 +557,8 @@
 
   function replenishmentView() {
     var items = replenishmentItems();
-    var rows = items.length ? '<div class="replenishment-table"><div class="replenishment-head"><span>商品</span><span>供应商</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>最高库存</span><span>建议采购</span></div>' + items.map(function (entry) { var p = entry.product; return '<div class="replenishment-row"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></div></div><div>' + esc(p.supplier || "未设置供应商") + '</div><div>' + statusSelect(p) + '</div><div><b>' + p.stock + '</b> ' + esc(p.unit) + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div>' + p.max + ' ' + esc(p.unit) + '</div><div class="replenish-qty"><strong>' + entry.quantity + '</strong> ' + esc(p.unit) + '</div></div>'; }).join("") + '</div>' : '<div class="empty"><strong>当前无需补货</strong><p>库存低于或等于最低库存，并且最高库存大于当前库存时，商品会显示在这里。</p></div>';
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">采购辅助</p><h1>自动补货建议</h1><p>库存达到最低库存线时，自动建议采购至最高库存。</p></div><button class="blue-action" onclick="Warehouse.exportReplenishment()">⇩ 导出采购清单</button></section><section class="report-cards replenishment-cards"><article><span>待补货商品</span><strong>' + items.length + ' 种</strong><p>按建议采购量从高到低排列</p></article><article><span>已设置供应商</span><strong>' + items.filter(function (entry) { return !!entry.product.supplier; }).length + ' 种</strong><p>便于直接联系采购</p></article><article><span>规则</span><strong>补至最高</strong><p>当前库存低于或等于最低库存时触发</p></article></section><section class="panel scroll">' + rows + '</section></div>';
+    var rows = items.length ? '<div class="replenishment-table"><div class="replenishment-head"><span>商品</span><span>供应商</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>提醒</span></div>' + items.map(function (p) { return '<div class="replenishment-row"><div class="product"><span>' + esc(p.name.slice(0, 1)) + '</span><div><strong>' + esc(p.name) + '</strong><small>' + esc(p.code) + '</small></div></div><div>' + esc(p.supplier || "未设置供应商") + '</div><div>' + statusSelect(p) + '</div><div><b>' + p.stock + '</b> ' + esc(p.unit) + '</div><div>' + p.min + ' ' + esc(p.unit) + '</div><div class="replenish-qty"><strong>需要补货</strong></div></div>'; }).join("") + '</div>' : '<div class="empty"><strong>当前无需补货</strong><p>库存低于或等于最低库存时，商品会显示在这里。</p></div>';
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">采购辅助</p><h1>补货提醒</h1><p>库存低于或等于最低库存时提醒；采购数量由你按实际需要决定。</p></div><button class="blue-action" onclick="Warehouse.exportReplenishment()">⇩ 导出待补货清单</button></section><section class="report-cards replenishment-cards"><article><span>待补货商品</span><strong>' + items.length + ' 种</strong><p>按当前库存从低到高排列</p></article><article><span>已设置供应商</span><strong>' + items.filter(function (p) { return !!p.supplier; }).length + ' 种</strong><p>便于直接联系采购</p></article><article><span>规则</span><strong>低于最低</strong><p>当前库存低于或等于最低库存时触发</p></article></section><section class="panel scroll">' + rows + '</section></div>';
   }
 
   function reportsView() {
@@ -552,7 +574,8 @@
   }
 
   function productsView() {
-    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>可新增商品、批量导入 Excel，并设置自动补货的库存上下限。</p></div><div class="heading-actions"><button class="secondary" onclick="Warehouse.downloadImportTemplate()">下载导入模板</button><button class="blue-action" onclick="document.getElementById(\'productImportFile\').click()">Excel 批量导入</button><input hidden id="productImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="Warehouse.previewProductImport(this.files[0]);this.value=\'\'"><button class="primary primary-action" onclick="Warehouse.productModal()">＋ 新增商品</button></div></section><section class="panel scroll">' + inventoryTable(activeProducts(), true) + '</section></div>';
+    var grouped = state.settings.supplierGrouping === true;
+    return '<div class="stack"><section class="heading"><div><p class="eyebrow">商品主数据</p><h1>商品资料</h1><p>可新增商品、批量导入 Excel，并设置最低库存和初始库存。</p></div><div class="heading-actions"><button class="secondary supplier-group-toggle ' + (grouped ? "active" : "") + '" onclick="Warehouse.toggleSupplierGrouping()">按供应商分类：' + (grouped ? "已开启" : "已关闭") + '</button><button class="secondary" onclick="Warehouse.downloadImportTemplate()">下载导入模板</button><button class="blue-action" onclick="document.getElementById(\'productImportFile\').click()">Excel 批量导入</button><input hidden id="productImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="Warehouse.previewProductImport(this.files[0]);this.value=\'\'"><button class="primary primary-action" onclick="Warehouse.productModal()">＋ 新增商品</button></div></section><section class="panel scroll">' + (grouped ? supplierGroupsView() : productsTable(activeProducts())) + '</section></div>';
   }
 
   function settingsView() {
@@ -824,7 +847,7 @@
   }
 
   function importHeaders() {
-    return ["商品编号", "商品名称", "单位", "最低库存", "最高库存", "期初库存", "期初单价（元）", "默认供应商", "供应状态"];
+    return ["商品编号", "商品名称", "单位", "最低库存", "期初库存", "期初单价（元）", "默认供应商", "供应状态"];
   }
 
   function historyHeaders(type) {
@@ -920,27 +943,23 @@
       var name = String(values[1] == null ? "" : values[1]).trim();
       var unit = String(values[2] == null ? "" : values[2]).trim();
       var minText = String(values[3] == null ? "" : values[3]).trim();
-      var maxText = String(values[4] == null ? "" : values[4]).trim();
       var min = Number(minText);
-      var max = Number(maxText);
-      var stock = String(values[5] == null ? "" : values[5]).trim() === "" ? 0 : Number(values[5]);
-      var priceText = String(values[6] == null ? "" : values[6]).trim();
+      var stock = String(values[4] == null ? "" : values[4]).trim() === "" ? 0 : Number(values[4]);
+      var priceText = String(values[5] == null ? "" : values[5]).trim();
       var price = priceText === "" ? 0 : Math.round(Number(priceText) * 100);
-      var supplier = String(values[7] == null ? "" : values[7]).trim();
-      var status = String(values[8] == null ? "" : values[8]).trim() || "正常供货";
+      var supplier = String(values[6] == null ? "" : values[6]).trim();
+      var status = String(values[7] == null ? "" : values[7]).trim() || "正常供货";
       var errors = [];
       if (!name) errors.push("商品名称必填");
       if (!unit) errors.push("单位必填");
       if (!minText || !Number.isSafeInteger(min) || min < 0) errors.push("最低库存必须填写非负整数");
-      if (!maxText || !Number.isSafeInteger(max) || max < 0) errors.push("最高库存必须填写非负整数");
-      if (Number.isSafeInteger(min) && Number.isSafeInteger(max) && max < min) errors.push("最高库存不能低于最低库存");
       if (!Number.isSafeInteger(stock) || stock < 0) errors.push("期初库存必须是非负整数");
       if (stock > 0 && priceText === "") errors.push("有期初库存时必须填写期初单价");
       if (!Number.isSafeInteger(price) || price < 0) errors.push("期初单价必须是可安全计算的非负数字");
       if (productStatuses.indexOf(status) < 0) errors.push("供应状态无效");
       if (codeSet[code.toLowerCase()]) errors.push("商品编号重复");
       if (!errors.length) codeSet[code.toLowerCase()] = true;
-      prepared.push({ row: rowNumber, code: code, name: name, unit: unit, min: min, max: max, stock: stock, price: price, supplier: supplier, status: status, errors: errors });
+      prepared.push({ row: rowNumber, code: code, name: name, unit: unit, min: min, stock: stock, price: price, supplier: supplier, status: status, errors: errors });
     });
     if (!prepared.length) throw new Error("“商品导入”工作表中没有可导入的商品。");
     if (prepared.length > 2000) throw new Error("一次最多导入 2000 种商品。");
@@ -961,7 +980,7 @@
     var historyErrors = histories.inbound.concat(histories.outbound).reduce(function (sum, row) { return sum + row.errors.length; }, 0);
     var errors = productErrors + historyErrors;
     var historyCount = histories.inbound.length + histories.outbound.length;
-    return '<div id="importError"></div><div class="import-summary ' + (errors ? "has-errors" : "ready") + '"><strong>' + (errors ? "发现 " + errors + " 个问题" : "校验通过，可以导入") + '</strong><span>共 ' + rows.length + ' 行商品，' + histories.inbound.length + ' 条入库历史、' + histories.outbound.length + ' 条出库历史；整批导入可一次撤回。</span></div>' + (historyCount ? '<p class="modal-intro">历史流水会按日期顺序写入；无日期的行应折算到期初库存，不会生成流水。</p>' : '') + '<div class="import-preview"><div class="import-head"><span>行</span><span>编号 / 商品</span><span>单位</span><span>库存范围</span><span>期初库存</span><span>供应商</span><span>校验结果 / 操作</span></div>' + rows.map(function (row) { return '<div class="import-row ' + (row.errors.length ? "invalid" : "valid") + '"><span>' + row.row + '</span><span><b>' + esc(row.code) + '</b><small>' + esc(row.name || "未填写") + '</small></span><span>' + esc(row.unit || "—") + '</span><span>' + row.min + ' / ' + row.max + '</span><span>' + row.stock + (row.stock ? ' · ' + money(row.price) : "") + '</span><span>' + esc(row.supplier || "未设置") + '</span><span class="import-actions">' + (row.errors.length ? '<b>' + esc(row.errors.join("；")) + '</b><button onclick="Warehouse.editImportProduct(' + row.row + ')">修改</button><button class="danger" onclick="Warehouse.deleteImportProduct(' + row.row + ')">删除该行</button>' : '可导入') + '</span></div>'; }).join("") + '</div>' + importHistoryIssuesHtml(histories) + '<div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary primary-action" ' + (errors ? "disabled" : "") + ' onclick="Warehouse.commitProductImport()">确认批量导入</button></div>';
+    return '<div id="importError"></div><div class="import-summary ' + (errors ? "has-errors" : "ready") + '"><strong>' + (errors ? "发现 " + errors + " 个问题" : "校验通过，可以导入") + '</strong><span>共 ' + rows.length + ' 行商品，' + histories.inbound.length + ' 条入库历史、' + histories.outbound.length + ' 条出库历史；整批导入可一次撤回。</span></div>' + (historyCount ? '<p class="modal-intro">历史流水会按日期顺序写入；无日期的行应折算到期初库存，不会生成流水。</p>' : '') + '<div class="import-preview"><div class="import-head"><span>行</span><span>编号 / 商品</span><span>单位</span><span>最低库存</span><span>期初库存</span><span>供应商</span><span>校验结果 / 操作</span></div>' + rows.map(function (row) { return '<div class="import-row ' + (row.errors.length ? "invalid" : "valid") + '"><span>' + row.row + '</span><span><b>' + esc(row.code) + '</b><small>' + esc(row.name || "未填写") + '</small></span><span>' + esc(row.unit || "—") + '</span><span>' + row.min + '</span><span>' + row.stock + (row.stock ? ' · ' + money(row.price) : "") + '</span><span>' + esc(row.supplier || "未设置") + '</span><span class="import-actions">' + (row.errors.length ? '<b>' + esc(row.errors.join("；")) + '</b><button onclick="Warehouse.editImportProduct(' + row.row + ')">修改</button><button class="danger" onclick="Warehouse.deleteImportProduct(' + row.row + ')">删除该行</button>' : '可导入') + '</span></div>'; }).join("") + '</div>' + importHistoryIssuesHtml(histories) + '<div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary primary-action" ' + (errors ? "disabled" : "") + ' onclick="Warehouse.commitProductImport()">确认批量导入</button></div>';
   }
 
   window.Warehouse = {
@@ -1104,30 +1123,41 @@
       render();
       toast("已更新“" + product.name + "”状态：" + value);
     },
-    productLimitsModal: function (id) {
+    toggleSupplierGrouping: function () {
+      var next = state.settings.supplierGrouping !== true;
+      recordUndo((next ? "开启" : "关闭") + "商品资料供应商分类");
+      state.settings.supplierGrouping = next;
+      save();
+      render();
+      toast(next ? "已开启按供应商分类，点击供应商可查看其全部商品。" : "已关闭按供应商分类。");
+    },
+    openSupplierProducts: function (supplier) {
+      selectedSupplier = String(supplier || "未设置供应商");
+      page = "supplier-products";
+      render();
+      window.scrollTo(0, 0);
+    },
+    productMinimumModal: function (id) {
       var product = productById(id);
       if (!product || product.archived) return;
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card limits-modal"><p class="eyebrow">自动补货规则</p><h2>' + esc(product.name) + '</h2><p class="modal-intro">库存低于或等于最低库存时，系统建议采购至最高库存。</p><div class="modal-grid"><label class="field"><span>最低库存 *</span><input id="limitMin" type="number" min="0" step="1" value="' + product.min + '"></label><label class="field"><span>最高库存 *</span><input id="limitMax" type="number" min="0" step="1" value="' + product.max + '"></label></div><div id="limitError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.saveProductLimits(\'' + esc(product.id) + '\')">保存库存范围</button></div></div></div>';
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card limits-modal"><p class="eyebrow">库存提醒规则</p><h2>' + esc(product.name) + '</h2><p class="modal-intro">库存低于或等于最低库存时，会显示在补货提醒中。</p><div class="modal-grid"><label class="field"><span>最低库存 *</span><input id="limitMin" type="number" min="0" step="1" value="' + product.min + '"></label></div><div id="limitError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.saveProductMinimum(\'' + esc(product.id) + '\')">保存最低库存</button></div></div></div>';
     },
-    saveProductLimits: function (id) {
+    saveProductMinimum: function (id) {
       var product = productById(id);
       var minInput = document.getElementById("limitMin");
-      var maxInput = document.getElementById("limitMax");
-      if (!product || !minInput || !maxInput) return;
+      if (!product || !minInput) return;
       var min = Number(minInput.value);
-      var max = Number(maxInput.value);
-      if (!minInput.value.trim() || !maxInput.value.trim() || !Number.isSafeInteger(min) || min < 0 || !Number.isSafeInteger(max) || max < min) {
-        flashFields([minInput, maxInput]);
-        return errorAt("limitError", "最低和最高库存必须是非负整数，并且最高库存不能低于最低库存。");
+      if (!minInput.value.trim() || !Number.isSafeInteger(min) || min < 0) {
+        flashFields([minInput]);
+        return errorAt("limitError", "最低库存必须填写非负整数。");
       }
-      if (product.min === min && product.max === max) return window.Warehouse.closeModal();
-      recordUndo("修改库存上下限：" + product.name);
+      if (product.min === min) return window.Warehouse.closeModal();
+      recordUndo("修改最低库存：" + product.name);
       product.min = min;
-      product.max = max;
       save();
       window.Warehouse.closeModal();
       render();
-      toast("已更新“" + product.name + "”库存范围。");
+      toast("已更新“" + product.name + "”最低库存。");
     },
     globalSearch: function (value) {
       globalQuery = value;
@@ -1394,13 +1424,13 @@
       var index = Number(rowNumber) - 1;
       var values = importRawProductRows[index];
       if (!values) return;
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card"><p class="eyebrow">修改导入行</p><h2>第 ' + rowNumber + ' 行商品</h2><div class="modal-grid"><label class="field"><span>商品编号</span><input id="editImportCode" value="' + esc(values[0] || "") + '"></label><label class="field"><span>商品名称 *</span><input id="editImportName" value="' + esc(values[1] || "") + '"></label><label class="field"><span>单位 *</span><input id="editImportUnit" value="' + esc(values[2] || "") + '"></label><label class="field"><span>最低库存 *</span><input id="editImportMin" type="number" min="0" step="1" value="' + esc(values[3] || "") + '"></label><label class="field"><span>最高库存 *</span><input id="editImportMax" type="number" min="0" step="1" value="' + esc(values[4] || "") + '"></label><label class="field"><span>期初库存</span><input id="editImportStock" type="number" min="0" step="1" value="' + esc(values[5] || "") + '"></label><label class="field"><span>期初单价（元）</span><input id="editImportPrice" type="number" min="0" step="0.01" value="' + esc(values[6] || "") + '"></label><label class="field"><span>默认供应商</span><input id="editImportSupplier" value="' + esc(values[7] || "") + '"></label><label class="field"><span>供应状态</span><select id="editImportStatus">' + productStatuses.map(function (status) { return '<option' + (String(values[8] || "正常供货") === status ? " selected" : "") + '>' + esc(status) + '</option>'; }).join("") + '</select></label></div><div id="editImportError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.cancelImportEdit()">取消</button><button class="primary" onclick="Warehouse.saveImportProduct(' + rowNumber + ')">保存修改</button></div></div></div>';
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card"><p class="eyebrow">修改导入行</p><h2>第 ' + rowNumber + ' 行商品</h2><div class="modal-grid"><label class="field"><span>商品编号</span><input id="editImportCode" value="' + esc(values[0] || "") + '"></label><label class="field"><span>商品名称 *</span><input id="editImportName" value="' + esc(values[1] || "") + '"></label><label class="field"><span>单位 *</span><input id="editImportUnit" value="' + esc(values[2] || "") + '"></label><label class="field"><span>最低库存 *</span><input id="editImportMin" type="number" min="0" step="1" value="' + esc(values[3] || "") + '"></label><label class="field"><span>期初库存</span><input id="editImportStock" type="number" min="0" step="1" value="' + esc(values[4] || "") + '"></label><label class="field"><span>期初单价（元）</span><input id="editImportPrice" type="number" min="0" step="0.01" value="' + esc(values[5] || "") + '"></label><label class="field"><span>默认供应商</span><input id="editImportSupplier" value="' + esc(values[6] || "") + '"></label><label class="field"><span>供应状态</span><select id="editImportStatus">' + productStatuses.map(function (status) { return '<option' + (String(values[7] || "正常供货") === status ? " selected" : "") + '>' + esc(status) + '</option>'; }).join("") + '</select></label></div><div id="editImportError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.cancelImportEdit()">取消</button><button class="primary" onclick="Warehouse.saveImportProduct(' + rowNumber + ')">保存修改</button></div></div></div>';
     },
     cancelImportEdit: function () { renderImportPreview(); },
     saveImportProduct: function (rowNumber) {
       var index = Number(rowNumber) - 1;
       if (!importRawProductRows[index]) return;
-      importRawProductRows[index] = ["editImportCode", "editImportName", "editImportUnit", "editImportMin", "editImportMax", "editImportStock", "editImportPrice", "editImportSupplier", "editImportStatus"].map(function (id) { return document.getElementById(id).value.trim(); });
+      importRawProductRows[index] = ["editImportCode", "editImportName", "editImportUnit", "editImportMin", "editImportStock", "editImportPrice", "editImportSupplier", "editImportStatus"].map(function (id) { return document.getElementById(id).value.trim(); });
       try { rebuildImportPreview(); renderImportPreview(); } catch (error) { errorAt("editImportError", error.message); }
     },
     deleteImportHistory: function (type, rowNumber) {
@@ -1433,7 +1463,7 @@
       if (!guessed.code) guessed.code = nextProductCode();
       var intro = prefill.source === "inbound" ? "库存中没有找到这个商品。已把入库时填写的内容带入，请补全带 * 的商品资料；按 Enter 可直接建立并入库。" : "带 * 的项目必须填写；编号已自动生成，可清空后改为人工编号。按 Enter 可直接建立商品。";
       var prefixNote = productCodePrefix() ? productCodePrefix() + " 为当前自动编号前缀" : "当前自动编号无前缀";
-      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal" onkeydown="Warehouse.productModalEnter(event)"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">' + esc(prefixNote) + '</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>最高库存 *</span><input id="newMax" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field product-unit-field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
+      document.getElementById("modalHost").innerHTML = '<div class="modal"><div class="modal-card product-modal" onkeydown="Warehouse.productModalEnter(event)"><p class="eyebrow">' + (prefill.source === "inbound" ? "入库时自动补建" : "商品主数据") + '</p><h2>' + (prefill.source === "inbound" ? "补全并新增商品" : "新增商品") + '</h2><p class="modal-intro">' + intro + '</p><div class="modal-grid"><label class="field"><span>商品编号 <small class="field-label-note">' + esc(prefixNote) + '</small></span><span class="clearable-input"><input id="newCode" value="' + esc(guessed.code) + '" placeholder="可手工填写" onkeydown="Warehouse.productModalEnter(event)"><button type="button" aria-label="清空商品编号" title="清空编号" onclick="Warehouse.clearProductCode()">×</button></span></label><label class="field"><span>商品名称 *</span><input id="newName" value="' + esc(guessed.name) + '" placeholder="必填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>默认供应商</span><input id="newSupplier" value="' + esc(prefill.supplier || "") + '" placeholder="选填" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>供应状态 *</span><select id="newStatus" onkeydown="Warehouse.productModalEnter(event)"><option>正常供货</option><option>补货已下单</option><option>价格有变动</option><option>启用替代供货</option><option>暂停采购</option></select></label><label class="field"><span>最低库存 *</span><input id="newMin" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field"><span>初始库存</span><input id="newInitialStock" type="number" min="0" step="1" value="0" onkeydown="Warehouse.productModalEnter(event)"></label><label class="field product-unit-field"><span>单位 *</span><input id="newUnit" value="件" placeholder="例如：件、箱、千克" onkeydown="Warehouse.productModalEnter(event)"></label></div><div id="productError"></div><div class="modal-actions"><button class="secondary" onclick="Warehouse.closeModal()">取消</button><button class="primary" onclick="Warehouse.addProduct()">' + (prefill.source === "inbound" ? "建立并返回入库" : "建立商品") + '</button></div></div></div>';
     },
     closeModal: function () {
       pendingProductLine = null;
@@ -1449,17 +1479,16 @@
       var codeInput = document.getElementById("newCode");
       var unitInput = document.getElementById("newUnit");
       var minInput = document.getElementById("newMin");
-      var maxInput = document.getElementById("newMax");
+      var initialStockInput = document.getElementById("newInitialStock");
       var name = nameInput.value.trim();
       var code = codeInput.value.trim();
       var unit = unitInput.value.trim();
       var min = Number(minInput.value);
-      var max = Number(maxInput.value);
+      var initialStock = Number(initialStockInput.value);
       var missingFields = [];
       if (!name) missingFields.push(nameInput);
       if (!unit) missingFields.push(unitInput);
       if (!minInput.value.trim()) missingFields.push(minInput);
-      if (!maxInput.value.trim()) missingFields.push(maxInput);
       if (missingFields.length) {
         flashFields(missingFields);
         return errorAt("productError", "请填写所有红色闪烁的商品资料。");
@@ -1468,9 +1497,9 @@
         flashFields([minInput]);
         return errorAt("productError", "最低库存必须是非负整数。");
       }
-      if (!Number.isSafeInteger(max) || max < min) {
-        flashFields([maxInput]);
-        return errorAt("productError", "最高库存必须是大于或等于最低库存的整数。");
+      if (!Number.isSafeInteger(initialStock) || initialStock < 0) {
+        flashFields([initialStockInput]);
+        return errorAt("productError", "初始库存必须是非负整数。");
       }
       if (!code) {
         code = nextProductCode();
@@ -1479,9 +1508,11 @@
         flashFields([codeInput]);
         return errorAt("productError", "商品编号 " + code + " 已存在。");
       }
-      var product = { id: uid("p"), code: code, name: name, unit: unit, status: document.getElementById("newStatus").value, min: min, max: max, stock: 0, avg: 0, supplier: document.getElementById("newSupplier").value.trim(), createdAt: now() };
+      var createdAt = now();
+      var product = { id: uid("p"), code: code, name: name, unit: unit, status: document.getElementById("newStatus").value, min: min, stock: initialStock, avg: 0, supplier: document.getElementById("newSupplier").value.trim(), createdAt: createdAt };
       recordUndo("新增商品：" + name);
       state.products.push(product);
+      if (initialStock > 0) state.documents.unshift({ id: uid("d"), no: "QC-OFF-" + String(state.documents.length + 1).padStart(4, "0"), type: "inbound", purpose: "建立商品时录入初始库存", supplier: product.supplier, ref: "", at: createdAt, operator: "离线管理员", items: [{ productId: product.id, quantity: initialStock, price: 0, cost: 0, before: 0, after: initialStock }] });
       var returningToInbound = pendingProductLine !== null && page === "inbound";
       if (returningToInbound && draftLines[pendingProductLine]) draftLines[pendingProductLine].product = product.code + " · " + product.name;
       if (returningToInbound && !draftSupplier.trim() && product.supplier) draftSupplier = product.supplier;
@@ -1495,9 +1526,9 @@
       }
     },
     downloadImportTemplate: function () {
-      var instructions = [["仓储台批量导入说明", "内容"], ["商品导入", "必须填写商品资料。期初库存是导入历史前的库存；不要修改表头或添加公式。"], ["商品编号", "可留空，由系统按照当前编号前缀自动生成；编号按文本保存。"], ["库存范围", "最低库存和最高库存必须是非负整数，且最高库存不能低于最低库存。"], ["期初库存", "可留空，按 0 处理；大于 0 时必须填写期初单价。"], ["入库历史 / 出库历史", "两张表均为可选。日期须填写 yyyy-mm-dd；历史按日期顺序写入。没有日期的旧流水不要写入历史，应折算至期初库存。供应商、单号、客户、联系方式、用途和备注均可留空。"], ["供应状态", productStatuses.join("、")]];
+      var instructions = [["仓储台批量导入说明", "内容"], ["商品导入", "必须填写商品资料。期初库存是导入历史前的库存；不要修改表头或添加公式。"], ["商品编号", "可留空，由系统按照当前编号前缀自动生成；编号按文本保存。"], ["最低库存", "必须填写非负整数；低于或等于此数量时会显示补货提醒。"], ["期初库存", "可留空，按 0 处理；大于 0 时必须填写期初单价。"], ["入库历史 / 出库历史", "两张表均为可选。日期须填写 yyyy-mm-dd；历史按日期顺序写入。没有日期的旧流水不要写入历史，应折算至期初库存。供应商、单号、客户、联系方式、用途和备注均可留空。"], ["供应状态", productStatuses.join("、")]];
       var rows = [importHeaders()];
-      download("仓储台-商品批量导入模板.xlsx", createXlsx([{ name: "填写说明", rows: instructions, formats: ["text", "text"] }, { name: "商品导入", rows: rows, formats: ["text", "text", "text", "integer", "integer", "integer", "currency", "text", "text"] }, { name: "入库历史", rows: [historyHeaders("inbound")], formats: ["text", "text", "integer", "currency", "text", "text", "text"] }, { name: "出库历史", rows: [historyHeaders("outbound")], formats: ["text", "text", "integer", "text", "text", "text", "text"] }]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      download("仓储台-商品批量导入模板.xlsx", createXlsx([{ name: "填写说明", rows: instructions, formats: ["text", "text"] }, { name: "商品导入", rows: rows, formats: ["text", "text", "text", "integer", "integer", "currency", "text", "text"] }, { name: "入库历史", rows: [historyHeaders("inbound")], formats: ["text", "text", "integer", "currency", "text", "text", "text"] }, { name: "出库历史", rows: [historyHeaders("outbound")], formats: ["text", "text", "integer", "text", "text", "text", "text"] }]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       toast("商品批量导入模板已下载。");
     },
     previewProductImport: function (file) {
@@ -1532,7 +1563,7 @@
       recordUndo("Excel 批量导入 " + importPreviewRows.length + " 种商品" + (history.length ? "及历史流水" : ""));
       var createdAt = now();
       var importedProducts = importPreviewRows.map(function (row) {
-        var product = { id: uid("p"), code: row.code, name: row.name, unit: row.unit, status: row.status, min: row.min, max: row.max, stock: row.stock, avg: row.stock ? row.price : 0, supplier: row.supplier, createdAt: createdAt };
+        var product = { id: uid("p"), code: row.code, name: row.name, unit: row.unit, status: row.status, min: row.min, stock: row.stock, avg: row.stock ? row.price : 0, supplier: row.supplier, createdAt: createdAt };
         state.products.push(product);
         return { product: product, row: row };
       });
@@ -1572,9 +1603,9 @@
     exportReplenishment: function () {
       var items = replenishmentItems();
       if (!items.length) return toast("当前没有需要补货的商品。");
-      var rows = [["商品编号", "品名", "单位", "当前库存", "最低库存", "最高库存", "建议采购量", "默认供应商", "供应状态"]].concat(items.map(function (entry) { var p = entry.product; return [p.code, p.name, p.unit, p.stock, p.min, p.max, entry.quantity, p.supplier, p.status]; }));
-      download("仓储台-补货建议-" + new Date().toISOString().slice(0, 10) + ".xlsx", createXlsx([{ name: "补货建议", rows: rows, formats: ["text", "text", "text", "integer", "integer", "integer", "integer", "text", "text"] }]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      toast("补货建议 Excel 已导出。");
+      var rows = [["商品编号", "品名", "单位", "当前库存", "最低库存", "默认供应商", "供应状态"]].concat(items.map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.supplier, p.status]; }));
+      download("仓储台-补货提醒-" + new Date().toISOString().slice(0, 10) + ".xlsx", createXlsx([{ name: "补货提醒", rows: rows, formats: ["text", "text", "text", "integer", "integer", "text", "text"] }]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      toast("补货提醒 Excel 已导出。");
     },
     exportBackup: function () {
       fetch("/api/backup", {
@@ -1613,7 +1644,7 @@
     },
     exportExcel: function (currentPeriod) {
       var docs = currentPeriod ? filteredDocs() : state.documents;
-      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "最高库存", "建议采购量", "状态", "默认供应商", "计价方式", "计价单价", "库存金额", "建库时间"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.max, replenishmentQuantity(p), p.status, p.supplier, costMethodLabel(state.settings.costMethod), inventoryUnitCost(p) / 100, inventoryValue(p) / 100, new Date(p.createdAt)]; }));
+      var inventory = [["商品编号", "品名", "单位", "当前库存", "最低库存", "状态", "默认供应商", "计价方式", "计价单价", "库存金额", "建库时间"]].concat(activeProducts().map(function (p) { return [p.code, p.name, p.unit, p.stock, p.min, p.status, p.supplier, costMethodLabel(state.settings.costMethod), inventoryUnitCost(p) / 100, inventoryValue(p) / 100, new Date(p.createdAt)]; }));
       var movements = [["时间", "单号", "类型", "商品编号", "品名", "数量", "单位", "供应商/客户/用途", "明细备注", "单价/成本", "金额", "操作人"]];
       docs.forEach(function (doc) { doc.items.forEach(function (line) { var p = productById(line.productId) || { code: "", name: "未知商品", unit: "" }; var unit = doc.type === "inbound" ? line.price : line.cost; var detail = doc.type === "inbound" ? doc.supplier : (doc.customer ? "客户 " + doc.customer + (doc.contact ? " · " + doc.contact : "") + (doc.purpose ? " · " : "") : "") + doc.purpose; movements.push([new Date(doc.at), doc.no, typeLabel(doc.type), p.code, p.name, doc.type === "outbound" ? -Math.abs(line.quantity) : line.quantity, p.unit, detail, line.remark || doc.remark || "", unit / 100, Math.abs(line.quantity) * unit / 100, doc.operator]); }); });
       var exportName = currentPeriod ? ("仓储台" + reportPeriodLabel() + "-" + reportFilterValue() + ".xlsx") : ("仓储台离线数据-" + new Date().toISOString().slice(0, 10) + ".xlsx");
