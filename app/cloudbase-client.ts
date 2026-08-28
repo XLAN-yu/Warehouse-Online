@@ -38,9 +38,12 @@ export async function loadCloudbaseWarehouse() {
 }
 
 export async function signInWithCloudbaseEmail(email: string, password: string) {
-  // CloudBase Web SDK 3.x 仍以 v1 兼容签名处理邮箱密码登录；
-  // 使用两个字符串参数，避免把对象误解析为邮箱字段。
-  await getCloudbaseApp().auth().signInWithEmailAndPassword(email, password);
+  // 使用 CloudBase Web SDK 3.x 的正式邮箱密码接口。该接口不会总是抛异常，
+  // 因此必须检查返回的 error，避免把真实登录错误误当作后续接口错误。
+  const signedIn = await getCloudbaseApp().auth().signInWithPassword({ email, password });
+  if (signedIn.error) {
+    throw new Error(signedIn.error.message || "CloudBase 邮箱登录失败。");
+  }
   const result = await cloudbaseBootstrap();
   if (!result.ok) throw new Error(result.error || "云端身份初始化失败。");
   return result;

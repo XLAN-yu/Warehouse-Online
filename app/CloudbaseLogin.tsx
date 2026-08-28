@@ -5,6 +5,18 @@ import { signInWithCloudbaseEmail } from "./cloudbase-client";
 
 type CloudbaseUser = { id: string; email: string; displayName: string; role: string };
 
+function readableError(reason: unknown) {
+  if (reason instanceof Error) return reason.message;
+  if (reason && typeof reason === "object") {
+    const value = reason as { message?: unknown; msg?: unknown; error?: unknown; code?: unknown };
+    if (typeof value.message === "string") return value.message;
+    if (typeof value.msg === "string") return value.msg;
+    if (typeof value.error === "string") return value.error;
+    try { return JSON.stringify(reason); } catch { /* use fallback below */ }
+  }
+  return "登录未完成，请稍后再试。";
+}
+
 export function CloudbaseLogin({ onSuccess }: { onSuccess: (user: CloudbaseUser) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,7 +32,7 @@ export function CloudbaseLogin({ onSuccess }: { onSuccess: (user: CloudbaseUser)
       if (!result.currentUser) throw new Error("未读取到当前用户信息。");
       onSuccess(result.currentUser);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "登录失败，请检查邮箱和密码。");
+      setError(readableError(reason));
     } finally {
       setSaving(false);
     }
