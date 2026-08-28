@@ -37,16 +37,36 @@ export async function loadCloudbaseWarehouse() {
   return result.data;
 }
 
-export async function signInWithCloudbaseEmail(email: string, password: string) {
-  // 使用 CloudBase Web SDK 3.x 的正式邮箱密码接口。该接口不会总是抛异常，
-  // 因此必须检查返回的 error，避免把真实登录错误误当作后续接口错误。
-  const signedIn = await getCloudbaseApp().auth().signInWithPassword({ email, password });
-  if (signedIn.error) {
-    throw new Error(signedIn.error.message || "CloudBase 邮箱登录失败。");
-  }
+async function completeCloudbaseSignIn() {
   const result = await cloudbaseBootstrap();
   if (!result.ok) throw new Error(result.error || "云端身份初始化失败。");
   return result;
+}
+
+export async function signInWithCloudbaseUsername(username: string, password: string) {
+  // 与控制台已启用的“用户名密码”方式一致。
+  const signedIn = await getCloudbaseApp().auth().signInWithPassword({ username, password });
+  if (signedIn.error) {
+    throw new Error(signedIn.error.message || "CloudBase 用户名登录失败。");
+  }
+  return completeCloudbaseSignIn();
+}
+
+export async function requestCloudbaseEmailCode(email: string) {
+  // 与控制台已启用的“邮箱验证码”方式一致；验证码发送后由返回的回调完成登录。
+  const response = await getCloudbaseApp().auth().signInWithOtp({ email });
+  if (response.error) throw new Error(response.error.message || "验证码发送失败。");
+  if (!response.data.verifyOtp) throw new Error("CloudBase 未返回验证码校验步骤。");
+  return response.data.verifyOtp;
+}
+
+export async function verifyCloudbaseEmailCode(
+  verifyOtp: (params: { token: string }) => Promise<{ error: { message?: string } | null }>,
+  code: string,
+) {
+  const verified = await verifyOtp({ token: code });
+  if (verified.error) throw new Error(verified.error.message || "验证码不正确或已过期。");
+  return completeCloudbaseSignIn();
 }
 
 export async function signOutOfCloudbase() {

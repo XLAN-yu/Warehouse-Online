@@ -1,7 +1,11 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { signInWithCloudbaseEmail } from "./cloudbase-client";
+import {
+  requestCloudbaseEmailCode,
+  signInWithCloudbaseUsername,
+  verifyCloudbaseEmailCode,
+} from "./cloudbase-client";
 
 type CloudbaseUser = { id: string; email: string; displayName: string; role: string };
 
@@ -18,8 +22,12 @@ function readableError(reason: unknown) {
 }
 
 export function CloudbaseLogin({ onSuccess }: { onSuccess: (user: CloudbaseUser) => void }) {
+  const [mode, setMode] = useState<"username" | "email-code">("username");
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [verifyOtp, setVerifyOtp] = useState<null | ((params: { token: string }) => Promise<{ error: { message?: string } | null }>)>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -28,9 +36,25 @@ export function CloudbaseLogin({ onSuccess }: { onSuccess: (user: CloudbaseUser)
     setError("");
     setSaving(true);
     try {
-      const result = await signInWithCloudbaseEmail(email.trim(), password);
+      const result = mode === "username"
+        ? await signInWithCloudbaseUsername(username.trim(), password)
+        : verifyOtp
+          ? await verifyCloudbaseEmailCode(verifyOtp, code.trim())
+          : (() => { throw new Error("请先获取邮箱验证码。"); })();
       if (!result.currentUser) throw new Error("未读取到当前用户信息。");
       onSuccess(result.currentUser);
+    } catch (reason) {
+      setError(readableError(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function sendCode() {
+    setError("");
+    setSaving(true);
+    try {
+      setVerifyOtp(await requestCloudbaseEmailCode(email.trim()));
     } catch (reason) {
       setError(readableError(reason));
     } finally {
@@ -42,10 +66,20 @@ export function CloudbaseLogin({ onSuccess }: { onSuccess: (user: CloudbaseUser)
     <span className="cloudbase-login-mark">仓</span>
     <p className="eyebrow">腾讯云 CloudBase</p>
     <h1>登录仓储台</h1>
-    <p>登录后才能访问共享仓库数据。首次使用请先在 CloudBase 身份认证中创建邮箱账号。</p>
-    <label><span>邮箱</span><input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></label>
-    <label><span>密码</span><input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入密码" /></label>
+    <p>请选择与你的 CloudBase 身份认证配置一致的登录方式。</p>
+    <div className="login-mode-tabs">
+      <button type="button" className={mode === "username" ? "selected" : ""} onClick={() => { setMode("username"); setError(""); }}>用户名密码</button>
+      <button type="button" className={mode === "email-code" ? "selected" : ""} onClick={() => { setMode("email-code"); setError(""); }}>邮箱验证码</button>
+    </div>
+    {mode === "username" ? <>
+      <label><span>用户名</span><input autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} placeholder="输入 CloudBase 用户名" /></label>
+      <label><span>密码</span><input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入密码" /></label>
+    </> : <>
+      <label><span>邮箱</span><input type="email" autoComplete="email" required value={email} onChange={(event) => { setEmail(event.target.value); setVerifyOtp(null); }} placeholder="name@example.com" /></label>
+      <button type="button" className="secondary-button" disabled={saving || !email.trim()} onClick={sendCode}>{verifyOtp ? "重新获取验证码" : "获取邮箱验证码"}</button>
+      {verifyOtp && <label><span>验证码</span><input inputMode="numeric" autoComplete="one-time-code" required value={code} onChange={(event) => setCode(event.target.value)} placeholder="输入邮箱收到的验证码" /></label>}
+    </>}
     {error && <div className="form-error"><span>!</span>{error}</div>}
-    <button className="primary-button" disabled={saving}>{saving ? "正在登录…" : "登录并进入仓库"}</button>
+    <button className="primary-button" disabled={saving || (mode === "email-code" && !verifyOtp)}>{saving ? "正在登录…" : "登录并进入仓库"}</button>
   </form></main>;
 }
