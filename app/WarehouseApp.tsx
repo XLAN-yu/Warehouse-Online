@@ -179,6 +179,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; glyph: string; adminOnly?: b
   { page: "recipes", label: "一键配料", glyph: "⊞" },
   { page: "replenishment", label: "补货提醒", glyph: "＋" },
   { page: "settings", label: "设置", glyph: "⚙", adminOnly: true },
+  { page: "users", label: "用户权限", glyph: "◎", adminOnly: true },
   { page: "backup", label: "备份与恢复", glyph: "↻", adminOnly: true },
 ];
 
