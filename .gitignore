@@ -42,4 +42,6 @@ next-env.d.ts
 /outputs/
 /work/
 /Signal-Lab-Offline.zip
+.site-package-stage/
+warehouse-online-build.tar.gz
 .git.stale-worktree
