@@ -321,7 +321,7 @@ function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
 
 function downloadTemplate(filename: string) {
   const anchor = document.createElement("a");
-  anchor.href = `/templates/${encodeURIComponent(filename)}`; anchor.download = filename; anchor.click();
+  anchor.href = `${import.meta.env.BASE_URL}templates/${encodeURIComponent(filename)}`; anchor.download = filename; anchor.click();
 }
 
 function parseCsv(text: string) {
@@ -342,7 +342,7 @@ type FflateWindow = Window & { fflate?: { unzipSync: (bytes: Uint8Array) => Reco
 let fflateLoader: Promise<void> | null = null;
 async function loadFflate() {
   if ((window as FflateWindow).fflate) return;
-  fflateLoader ??= new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "/fflate.min.js"; script.onload = () => resolve(); script.onerror = () => reject(new Error("Excel 解析组件加载失败。")); document.head.appendChild(script); });
+  fflateLoader ??= new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = `${import.meta.env.BASE_URL}fflate.min.js`; script.onload = () => resolve(); script.onerror = () => reject(new Error("Excel 解析组件加载失败。")); document.head.appendChild(script); });
   await fflateLoader;
 }
 function xmlText(value: string) { return value.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code))); }
