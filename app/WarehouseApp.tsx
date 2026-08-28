@@ -378,11 +378,13 @@ function ProductAutocomplete({
   products,
   value,
   onChange,
+  onCreate,
   disabled,
 }: {
   products: Product[];
   value: string;
   onChange: (id: string) => void;
+  onCreate?: (name: string) => void;
   disabled?: boolean;
 }) {
   const chosen = products.find((product) => product.id === value);
@@ -412,6 +414,12 @@ function ProductAutocomplete({
           setQuery(event.target.value);
           onChange("");
           setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || chosen || !query.trim() || suggestions.length) return;
+          event.preventDefault();
+          setOpen(false);
+          onCreate?.(query.trim());
         }}
         aria-label="搜索商品"
       />
@@ -629,6 +637,7 @@ function DocumentForm({
   editing,
   initialProductId,
   onSaved,
+  onRefresh,
   onCancelEdit,
   onGuestDocument,
 }: {
@@ -637,6 +646,7 @@ function DocumentForm({
   editing: WarehouseDocument | null;
   initialProductId?: string;
   onSaved: (message: string) => Promise<void>;
+  onRefresh: (message?: string) => Promise<void>;
   onCancelEdit: () => void;
   onGuestDocument: (payload: GuestDocumentPayload) => Promise<{ documentNo: string }>;
 }) {
@@ -658,6 +668,8 @@ function DocumentForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showOcr, setShowOcr] = useState(false);
+  const [newProductName, setNewProductName] = useState("");
+  const [pendingNewProductCode, setPendingNewProductCode] = useState("");
   const costMethod = data.preferences?.outboundCostMethod ?? "weighted";
   const costMethodLabel = costMethod === "fifo" ? "先进先出" : costMethod === "lastInbound" ? "最近入库价" : "移动加权平均";
 
@@ -689,6 +701,15 @@ function DocumentForm({
     const item = document?.items.find((line) => line.product_id === productId);
     return item?.unit_price_cents == null ? "" : String(item.unit_price_cents / 100);
   }
+
+  useEffect(() => {
+    if (!pendingNewProductCode) return;
+    const product = data.products.find((item) => item.code === pendingNewProductCode);
+    if (!product) return;
+    setLines((current) => current.map((line, index) => index === 0 ? { ...line, productId: product.id, unitPrice: type === "inbound" ? lastInboundPrice(product.id) : line.unitPrice } : line));
+    if (type === "inbound" && product.default_supplier_name) setSupplier(product.default_supplier_name);
+    setPendingNewProductCode("");
+  }, [data.products, pendingNewProductCode, type]);
 
   function updateLine(key: string, patch: Partial<FormLine>) {
     if (type === "inbound" && patch.productId) {
@@ -757,7 +778,7 @@ function DocumentForm({
           {lines.map((line, index) => {
             const product = data.products.find((item) => item.id === line.productId);
             return <div className={`line-row ${type}`} key={line.key}>
-              <div className="line-product"><small>{String(index + 1).padStart(2, "0")}</small><ProductAutocomplete products={data.products} value={line.productId} onChange={(productId) => updateLine(line.key, { productId })} /></div>
+              <div className="line-product"><small>{String(index + 1).padStart(2, "0")}</small><ProductAutocomplete products={data.products} value={line.productId} onChange={(productId) => updateLine(line.key, { productId })} onCreate={type === "inbound" ? (name) => setNewProductName(name) : undefined} /></div>
               <div className={`stock-cell ${product && Number(line.quantity) > product.current_stock && type === "outbound" ? "danger" : ""}`}>{product ? <><b>{product.current_stock}</b><small>{product.unit}</small></> : "—"}</div>
               <label className="number-input"><input inputMode="numeric" min="1" step="1" value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} placeholder="0" /><span>{product?.unit ?? "件"}</span></label>
               {type === "inbound" ? <label className="number-input price-input"><span>¥</span><input inputMode="decimal" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} placeholder="0.00" /></label> : <div className="cost-rule"><strong>{costMethodLabel}</strong>{data.currentUser.role !== "viewer" && product ? <small>当前 {money(product.average_cost_cents)}</small> : <small>提交时自动计算</small>}</div>}
@@ -770,6 +791,7 @@ function DocumentForm({
         <div className="document-footer"><div className="document-summary"><span>共 <b>{lines.filter((line) => line.productId).length}</b> 种商品</span><span>合计数量 <b>{totalQuantity}</b></span>{type === "inbound" && <span>入库金额 <strong>{money(Math.round(totalAmount * 100))}</strong></span>}</div><button className={`submit-document ${type}`} disabled={saving}>{saving ? "正在校验并保存…" : editing ? "确认修改" : type === "inbound" ? "确认入库" : "确认出库"}<span>→</span></button></div>
       </form>
       {showOcr && <OcrDialog products={data.products} onClose={() => setShowOcr(false)} onApply={(ocr) => { if (ocr.supplier) setSupplier(ocr.supplier); if (ocr.reference) setReference(ocr.reference); if (ocr.items.length) setLines(ocr.items); setShowOcr(false); }} />}
+      {newProductName && <CreateProductModal suppliers={data.suppliers} statusDefinitions={data.statusDefinitions} preferences={data.preferences ?? DEFAULT_PREFERENCES} initialName={newProductName} initialSupplier={supplier} onClose={() => setNewProductName("")} onCreated={async (message, code) => { setNewProductName(""); setPendingNewProductCode(code); await onRefresh(message); }} />}
     </div>
   );
 }
@@ -791,16 +813,16 @@ function InventoryView({ data, onOpenProduct, onStartStocktake, onNavigate }: { 
   }
   return (
     <div className="page-stack">
-      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">实时库存</p><h1>{selectedSupplier ?? "查看库存"}</h1><p>{selectedSupplier ? `该供应商下共有 ${source.length} 种库存商品。` : `当前共有 ${data.products.length} 种库存商品。`}</p></div><div className="inventory-actions"><button className="export-button" onClick={() => exportExcel(filtered, data.documents, data.currentUser.role !== "viewer", `库存清单-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出 Excel</button></div></section>
+      <section className="page-heading inventory-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">实时库存</p><h1>{selectedSupplier ?? "查看库存"}</h1><p>{selectedSupplier ? `该供应商下共有 ${source.length} 种库存商品。` : `当前共有 ${data.products.length} 种库存商品。`}</p></div><label className="search-box inventory-header-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索品名、编号或供应商" /></label><div className="inventory-actions"><button className="export-button" onClick={() => exportExcel(filtered, data.documents, data.currentUser.role !== "viewer", `库存清单-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出 Excel</button></div></section>
       {!selectedSupplier && <section className="inventory-shortcuts"><button onClick={() => onNavigate("stocktake")}><span>✓</span><strong>库存盘点</strong><i>→</i></button><button onClick={() => onNavigate("reports")}><span>▤</span><strong>库存报表</strong><i>→</i></button></section>}
       <section className="panel data-panel">
-        <div className="table-toolbar inventory-toolbar"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button>{(!groupBySupplier || selectedSupplier) && <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索品名、编号或供应商" /></label>}<span className="result-count">{groupBySupplier && !selectedSupplier ? `共 ${data.products.length} 种库存商品，按默认供应商分类` : `${filtered.length} 条结果`}</span></div>
-        {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list inventory-supplier-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><div><strong>{supplier}</strong></div><span><small>库存商品</small><b>{products.length} 种 · {products.reduce((total, product) => total + product.current_stock, 0)} 件</b></span></button>)}</div> : filtered.length ? <div className={`data-table inventory-table ${data.currentUser.role === "viewer" ? "viewer" : ""}`}>
+        <div className="table-toolbar inventory-toolbar"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button><span className="result-count">{groupBySupplier && !selectedSupplier && !query ? `共 ${data.products.length} 种库存商品，按默认供应商分类` : `${filtered.length} 条结果`}</span></div>
+        {groupBySupplier && !selectedSupplier && !query ? <div className="supplier-group-list inventory-supplier-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><div><strong>{supplier}</strong></div><span><small>库存商品</small><b>{products.length} 种 · {products.reduce((total, product) => total + product.current_stock, 0)} 件</b></span></button>)}</div> : filtered.length ? <div className={`data-table inventory-table ${data.currentUser.role === "viewer" ? "viewer" : ""}`}>
            <div className="table-head"><span>商品信息</span><span>状态</span><span>当前库存</span><span>最低库存</span><span>默认供应商</span>{data.currentUser.role !== "viewer" && <><span>平均成本</span><span>库存金额</span></>}</div>
           {filtered.map((product) => {
-            return <div className="table-row" key={product.id}>
-              <div className="product-identity"><button className="product-history-link" onClick={() => onOpenProduct(product.id)}><strong>{product.name}</strong><small>{product.code}</small></button></div>
-              <div>{product.status === "pending_stocktake" ? <button className="status-stocktake-link" onClick={() => onStartStocktake(product.id)}><StatusBadge status={product.status} definitions={data.statusDefinitions} /></button> : <StatusBadge status={product.status} definitions={data.statusDefinitions} />}</div>
+            return <div className={`table-row ${product.status === "pending_stocktake" ? "pending-stocktake-row" : ""}`} key={product.id} onClick={() => product.status === "pending_stocktake" && onStartStocktake(product.id)}>
+              <div className="product-identity"><button className="product-history-link" onClick={(event) => { event.stopPropagation(); onOpenProduct(product.id); }}><strong>{product.name}</strong></button></div>
+              <div>{product.status === "pending_stocktake" ? <button className="status-stocktake-link" onClick={(event) => { event.stopPropagation(); onStartStocktake(product.id); }}><StatusBadge status={product.status} definitions={data.statusDefinitions} /></button> : <StatusBadge status={product.status} definitions={data.statusDefinitions} />}</div>
               <div className="quantity-cell"><strong>{number(product.current_stock)}</strong><small>{product.unit}</small></div>
               <div>{product.min_stock} {product.unit}</div>
               <div>{product.default_supplier_name ?? "—"}</div>
@@ -844,17 +866,17 @@ function ReplenishmentView({ data }: { data: AppData }) {
   </div>;
 }
 
-function StocktakeView({ data, initialProductId, onSaved, onGuestStocktake }: { data: AppData; initialProductId?: string; onSaved: (message: string) => Promise<void>; onGuestStocktake: (payload: GuestStocktakePayload) => Promise<{ documentNo: string }> }) {
+function StocktakeView({ data, initialProductId, onSaved, onGuestStocktake, onBack }: { data: AppData; initialProductId?: string; onSaved: (message: string) => Promise<void>; onGuestStocktake: (payload: GuestStocktakePayload) => Promise<{ documentNo: string }>; onBack: () => void }) {
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [purpose, setPurpose] = useState("定期盘点");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState(initialProductId ?? "");
   useEffect(() => {
-    const product = data.products.find((item) => item.id === initialProductId);
-    if (product) setQuery(product.code);
-  }, [data.products, initialProductId]);
-  const filtered = data.products.filter((product) => `${product.code} ${product.name}`.toLowerCase().includes(query.toLowerCase()));
+    setSelectedProductId(initialProductId ?? "");
+  }, [initialProductId]);
+  const filtered = data.products.filter((product) => `${product.code} ${product.name}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => Number(b.status === "pending_stocktake") - Number(a.status === "pending_stocktake"));
   // A newly imported "待盘点" item also needs a confirmation record when its
   // counted quantity happens to equal the initial value.
   const changed = data.products.filter((product) => counts[product.id] !== undefined && counts[product.id] !== "" && (Number(counts[product.id]) !== product.current_stock || product.status === "pending_stocktake"));
@@ -874,7 +896,8 @@ function StocktakeView({ data, initialProductId, onSaved, onGuestStocktake }: { 
   }
   return (
     <div className="page-stack">
-      <section className="page-hero compact stocktake"><div><p className="eyebrow">账实核对 · 自动留痕</p><h1>库存盘点</h1><p>填写实盘数量，系统自动生成盘盈盘亏记录；不会直接覆盖历史。</p></div><div className="stocktake-counter"><small>待调整</small><strong>{changed.length}</strong><span>种商品</span></div></section>
+      <button className="secondary-button product-back page-back" onClick={onBack}>← 返回查看库存</button>
+      <section className="page-hero compact stocktake"><div><p className="eyebrow">账实核对 · 自动留痕</p><h1>库存盘点</h1><p>点击任意商品行即可定位并填写实盘数量；新增待盘点商品排在前面。</p></div><div className="stocktake-counter"><small>待调整</small><strong>{changed.length}</strong><span>种商品</span></div></section>
       <section className="panel data-panel">
         <div className="table-toolbar stocktake-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索需要盘点的商品" /></label><label className="purpose-field"><span>盘点说明</span><input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label></div>
         <div className="stocktake-table">
@@ -882,7 +905,7 @@ function StocktakeView({ data, initialProductId, onSaved, onGuestStocktake }: { 
           {filtered.map((product) => {
             const current = counts[product.id];
             const difference = current === undefined || current === "" ? 0 : Number(current) - product.current_stock;
-            return <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code}</small></div></div><div className="book-quantity"><b>{product.current_stock}</b> {product.unit}</div><label className="count-input"><input min="0" step="1" inputMode="numeric" value={current ?? ""} onChange={(event) => { setCounts((values) => ({ ...values, [product.id]: event.target.value })); setError(""); }} placeholder={String(product.current_stock)} /><span>{product.unit}</span></label><div className={`difference ${difference > 0 ? "positive" : difference < 0 ? "negative" : ""}`}>{difference === 0 ? "—" : `${difference > 0 ? "+" : ""}${difference} ${product.unit}`}</div></div>;
+            return <div className={`table-row ${product.id === selectedProductId ? "selected" : ""}`} key={product.id} onClick={() => setSelectedProductId(product.id)}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code}</small></div></div><div className="book-quantity"><b>{product.current_stock}</b> {product.unit}</div><label className="count-input" onClick={(event) => event.stopPropagation()}><input autoFocus={product.id === selectedProductId} min="0" step="1" inputMode="numeric" value={current ?? ""} onChange={(event) => { setCounts((values) => ({ ...values, [product.id]: event.target.value })); setError(""); }} placeholder={String(product.current_stock)} /><span>{product.unit}</span></label><div className={`difference ${difference > 0 ? "positive" : difference < 0 ? "negative" : ""}`}>{difference === 0 ? "—" : `${difference > 0 ? "+" : ""}${difference} ${product.unit}`}</div></div>;
           })}
         </div>
         {error && <div className="form-error"><span>!</span>{error}</div>}
@@ -892,7 +915,7 @@ function StocktakeView({ data, initialProductId, onSaved, onGuestStocktake }: { 
   );
 }
 
-function ReportsView({ data }: { data: AppData }) {
+function ReportsView({ data, onBack }: { data: AppData; onBack: () => void }) {
   const [period, setPeriod] = useState<"day" | "month" | "year">("day");
   const active = data.documents.filter((document) => document.status === "active");
   const today = new Date();
@@ -912,7 +935,7 @@ function ReportsView({ data }: { data: AppData }) {
   const labels = { day: "日报", month: "月报", year: "年报" };
   return (
     <div className="page-stack">
-      <section className="page-heading report-heading"><div><p className="eyebrow">库存汇总</p><h1>库存报表</h1><p>按当前日期快速生成日报、月报或年报。</p></div><button className="export-button" onClick={() => exportExcel(data.products, filtered, data.currentUser.role !== "viewer", `库存${labels[period]}-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出 Excel</button></section>
+      <section className="page-heading report-heading"><div><button className="secondary-button product-back page-back" onClick={onBack}>← 返回查看库存</button><p className="eyebrow">库存汇总</p><h1>库存报表</h1><p>按当前日期快速生成日报、月报或年报。</p></div><button className="export-button" onClick={() => exportExcel(data.products, filtered, data.currentUser.role !== "viewer", `库存${labels[period]}-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出 Excel</button></section>
       <div className="period-tabs">{(["day", "month", "year"] as const).map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{labels[item]}</button>)}</div>
       <section className="report-cards">
         <article><span className="report-icon inbound">↘</span><div><small>入库数量</small><strong>{number(inQty)} <em>件</em></strong><p>{inbound.length} 张入库单</p></div>{data.currentUser.role !== "viewer" && <b>{money(inValue)}</b>}</article>
@@ -1010,12 +1033,12 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
   );
 }
 
-function CreateProductModal({ suppliers, statusDefinitions, preferences, onClose, onCreated }: { suppliers: Supplier[]; statusDefinitions: StatusDefinition[]; preferences: WarehousePreferences; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
-  const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", initialStock: "0", status: statusDefinitions.find((item) => item.id === "normal")?.id ?? statusDefinitions[0]?.id ?? "normal", defaultSupplier: "", alternates: "" });
+function CreateProductModal({ suppliers, statusDefinitions, preferences, initialName = "", initialSupplier = "", onClose, onCreated }: { suppliers: Supplier[]; statusDefinitions: StatusDefinition[]; preferences: WarehousePreferences; initialName?: string; initialSupplier?: string; onClose: () => void; onCreated: (message: string, code: string) => Promise<void> }) {
+  const [form, setForm] = useState({ codeMode: "auto", code: "", name: initialName, unit: "件", minStock: "0", initialStock: "0", status: statusDefinitions.find((item) => item.id === "normal")?.id ?? statusDefinitions[0]?.id ?? "normal", defaultSupplier: initialSupplier, alternates: "" });
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); setError("");
-    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", codePrefix: preferences.productCodePrefix, unit: form.unit, minStock: Number(form.minStock), initialStock: Number(form.initialStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
+    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", codePrefix: preferences.productCodePrefix, unit: form.unit, minStock: Number(form.minStock), initialStock: Number(form.initialStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`, String(result.code)); }
     catch (submitError) { setError(submitError instanceof Error ? submitError.message : "新增失败。"); }
     finally { setSaving(false); }
   }
@@ -1040,6 +1063,7 @@ function ProductImportDialog({ onClose, onImported }: { onClose: () => void; onI
     if (!parsed.length) return setError("没有读取到商品资料。");
     setRows(parsed); setError("");
   }
+
   async function submit() {
     if (!rows.length) return setError("请先选择导入文件。");
     setSaving(true); setError("");
@@ -1093,7 +1117,7 @@ function RecipesView({ data, onRefresh }: { data: AppData; onRefresh: (message: 
   }
 
   return <div className="page-stack">
-    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <div className="product-heading-actions"><button className="secondary-button" onClick={() => downloadTemplate("仓储台-一键配料导入模板.xlsx")}>下载配料模板</button><button className="import-button" onClick={() => setShowImport(true)}>导入产品配方</button><button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button></div>}</section>
+    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <div className="product-heading-actions"><button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button><button className="secondary-button" onClick={() => downloadTemplate("仓储台-一键配料导入模板.xlsx")}>下载配料模板</button><button className="export-button" onClick={() => setShowImport(true)}>导入产品配方</button></div>}</section>
     <section className="panel recipe-list">{data.recipes.length ? data.recipes.map((recipe) => <button key={recipe.id} onClick={() => setSelectedId(recipe.id)}><strong>{recipe.name}</strong><span><small>配件种类</small><b>{recipe.components.length} 种</b></span><span><small>可下单</small><b>{maximum(recipe)} 件</b></span></button>) : <EmptyState title="还没有产品配方" detail={canEdit ? "新增产品配方后，即可按配方一键扣减配件库存。" : "请由管理员新增产品配方。"} />}</section>
     {showEditor && <RecipeEditor products={data.products} onClose={() => setShowEditor(false)} onSave={save} />}
     {showImport && <RecipeImportDialog data={data} onClose={() => setShowImport(false)} onImported={async (message) => { setShowImport(false); await onRefresh(message); }} />}
@@ -1133,7 +1157,7 @@ function RecipeImportDialog({ data, onClose, onImported }: { data: AppData; onCl
     } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败，请检查内容。"); }
     finally { setSaving(false); }
   }
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>产品配方批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择一键配料导入模板</strong><small>支持离线版同款 XLSX 模板；库存中没有的配件会自动新增并待盘点。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行配件资料，确认后导入。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认导入配方"}</button></div></div></div>;
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">配方导入检查</p><h2>产品配件结构预览</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择一键配料导入模板</strong><small>库存中没有的配件会自动新增为“新增待盘点”。</small></label>{rows.length > 0 && <><div className="import-preview-note">已读取 {rows.length} 行配件；请确认预览后导入。</div><div className="import-preview-table"><div><span>产品</span><span>配件品类</span><span>每件用量</span><span>货架位置</span><span>供应商</span><span>备注</span></div>{rows.map((row, index) => <div key={index}><b>{row["产品名称"]}</b><b>{row["配件品类"]}</b><b>{row["每件用量"]}</b><span>{row["货架位置（选填）"] || "—"}</span><span>{row["供应商（选填）"] || "—"}</span><span>{row["备注（选填）"] || "—"}</span></div>)}</div></>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认导入配方"}</button></div></div></div>;
 }
 
 function RecipeOrderControl({ disabled, onOrder }: { disabled: boolean; onOrder: (quantity: number) => Promise<void> }) {
@@ -1540,12 +1564,12 @@ export function WarehouseApp() {
             const product = data.products.find((item) => item.id === selectedProductId);
             return product ? <ProductHistoryView data={data} product={product} onBack={() => navigate("inventory")} /> : <EmptyState title="商品不存在" detail="该商品可能已被移除，请返回库存重新选择。" />;
           })()}
-          {page === "inbound" && <DocumentForm key={`in-${editing?.id || prefillProductId || "new"}`} type="inbound" data={data} editing={editing} initialProductId={prefillProductId} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); setPrefillProductId(""); navigate("records"); }} onSaved={completeAction} />}
-          {page === "outbound" && <DocumentForm key={`out-${editing?.id || prefillProductId || "new"}`} type="outbound" data={data} editing={editing} initialProductId={prefillProductId} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); setPrefillProductId(""); navigate("records"); }} onSaved={completeAction} />}
+          {page === "inbound" && <DocumentForm key={`in-${editing?.id || prefillProductId || "new"}`} type="inbound" data={data} editing={editing} initialProductId={prefillProductId} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); setPrefillProductId(""); navigate("records"); }} onSaved={completeAction} onRefresh={refresh} />}
+          {page === "outbound" && <DocumentForm key={`out-${editing?.id || prefillProductId || "new"}`} type="outbound" data={data} editing={editing} initialProductId={prefillProductId} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); setPrefillProductId(""); navigate("records"); }} onSaved={completeAction} onRefresh={refresh} />}
           {page === "inventory" && <InventoryView data={data} onOpenProduct={openProductHistory} onStartStocktake={startStocktake} onNavigate={navigate} />}
           {page === "replenishment" && <ReplenishmentView data={data} />}
-          {page === "stocktake" && <StocktakeView data={data} initialProductId={stocktakeProductId} onSaved={async (message) => { setStocktakeProductId(""); if (data.guest) showToast(message); else await refresh(message); navigate("home"); }} onGuestStocktake={simulateGuestStocktake} />}
-          {page === "reports" && <ReportsView data={data} />}
+          {page === "stocktake" && <StocktakeView data={data} initialProductId={stocktakeProductId} onSaved={async (message) => { setStocktakeProductId(""); if (data.guest) showToast(message); else await refresh(message); navigate("home"); }} onGuestStocktake={simulateGuestStocktake} onBack={() => navigate("inventory")} />}
+          {page === "reports" && <ReportsView data={data} onBack={() => navigate("inventory")} />}
           {page === "records" && <RecordsView data={data} onRefresh={refresh} onEdit={(document) => { setEditing(document); navigate(document.type === "inbound" ? "inbound" : "outbound"); }} />}
           {page === "products" && <ProductsView data={data} onRefresh={refresh} />}
           {page === "recipes" && <RecipesView data={data} onRefresh={refresh} />}
