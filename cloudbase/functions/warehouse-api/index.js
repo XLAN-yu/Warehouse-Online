@@ -13,6 +13,7 @@ const DEFAULT_STATUSES = [
   { id: "price_changed", label: "价格有变动", color: "#C56A16" }, { id: "alternate", label: "启用替代供货", color: "#3377C8" },
   { id: "paused", label: "暂停采购", color: "#C74C4C" }, { id: "pending_stocktake", label: "新增待盘点", color: "#655BC7", system: true },
 ];
+let databasePreparation;
 
 const now = () => new Date().toISOString();
 const uuid = () => (global.crypto && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -21,6 +22,14 @@ const positive = (value) => Number.isInteger(Number(value)) && Number(value) > 0
 const nonNegative = (value) => Number.isInteger(Number(value)) && Number(value) >= 0 ? Number(value) : -1;
 const money = (value) => Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value) * 100) : -1;
 const clientRole = (role) => ["owner", "admin", "operator"].includes(role) ? "admin" : "viewer";
+
+async function ensureCollections() {
+  // CloudBase 的空集合不能先读取；首次调用先幂等创建两个业务集合。
+  databasePreparation ??= Promise.all([USERS, STATE].map(async (name) => {
+    try { await db.createCollection(name); } catch { /* 已存在时控制台会返回错误，可安全忽略。 */ }
+  }));
+  await databasePreparation;
+}
 
 async function identity() {
   // 身份由 CloudBase 运行时注入，不能信任前端传来的邮箱或 uid。
@@ -109,6 +118,7 @@ async function mutate(user, event) {
 exports.main = async (event = {}, context = {}) => {
   try {
     const action = text(event.action || "bootstrap", 40); if (action === "health") return { ok: true, environment: process.env.TCB_ENV || "current" };
+    await ensureCollections();
     const user = await currentUser(); if (action === "set-role") { ensureOwner(user); const userId = text(event.userId, 160); const role = text(event.role, 20); if (!userId || !ROLES.has(role) || role === "owner") throw new Error("用户或角色参数无效。"); await db.collection(USERS).doc(userId).update({ data: { role, updatedAt: now(), updatedBy: user.id } }); return { ok: true, users: await users() }; }
     const next = await state(); const allUsers = await users();
     if (action === "bootstrap" || action === "load") return { ok: true, currentUser: user, warehouseState: next, data: publicData(next, user, allUsers) };
