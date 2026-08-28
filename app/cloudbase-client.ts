@@ -8,7 +8,12 @@ export const CLOUDBASE_ENV_ID = "warehouse-d0g4dqtmd88ca81c0";
 let app: ReturnType<typeof cloudbase.init> | null = null;
 
 export function getCloudbaseApp() {
-  if (!app) app = cloudbase.init({ env: CLOUDBASE_ENV_ID });
+  if (!app) app = cloudbase.init({
+    env: CLOUDBASE_ENV_ID,
+    // 新版 CloudBase Web SDK 会用 clientId 标识网页客户端；
+    // 对本环境它与环境 ID 相同。
+    clientId: CLOUDBASE_ENV_ID,
+  });
   return app;
 }
 
