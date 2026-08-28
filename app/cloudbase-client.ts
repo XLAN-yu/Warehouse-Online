@@ -38,7 +38,9 @@ export async function loadCloudbaseWarehouse() {
 }
 
 export async function signInWithCloudbaseEmail(email: string, password: string) {
-  await getCloudbaseApp().auth().signInWithEmailAndPassword({ email, password });
+  // CloudBase Web SDK 3.x 仍以 v1 兼容签名处理邮箱密码登录；
+  // 使用两个字符串参数，避免把对象误解析为邮箱字段。
+  await getCloudbaseApp().auth().signInWithEmailAndPassword(email, password);
   const result = await cloudbaseBootstrap();
   if (!result.ok) throw new Error(result.error || "云端身份初始化失败。");
   return result;
