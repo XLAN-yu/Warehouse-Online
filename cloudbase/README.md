@@ -20,10 +20,18 @@
 4. 在 CloudBase 身份认证中保持“邮箱 + 密码”登录方式开启。
 5. 在云函数安全设置中，只允许已登录用户调用该函数；不要开放匿名调用。
 
-## 当前阶段
+## 当前功能
 
-本次提交先完成身份与角色基础：首次由最高管理员邮箱登录时自动写入 `warehouse_users` 并设为 `owner`；其他登录者自动写入为 `pending`。最高管理员可调用 `set-role` 将用户设为 `admin`、`operator` 或 `viewer`。
+首次由最高管理员邮箱登录时自动写入 `warehouse_users` 并设为 `owner`；其他登录者自动写入为 `pending`。最高管理员可调用 `set-role` 将用户设为 `admin`、`operator` 或 `viewer`。
 
-下一阶段会将现有商品、入出库、盘点和配方动作迁到该函数，并以文档级数据和审计记录保存，完成后才切换网页请求地址。
+商品、供应商、入库、出库、盘点、配方、状态设置和备份恢复均通过 `warehouse-api` 保存到 CloudBase 的 `warehouse_state` 文档；所有登录用户读取同一份仓库数据。
+
+## 发布网页到 CloudBase 静态托管
+
+1. 在项目根目录运行 `npm run build:cloudbase`。
+2. 进入 CloudBase 控制台的 **静态网站托管**，上传 `cloudbase-static/dist` 目录的全部内容。
+3. 设置默认文档为 `index.html`，并开启单页应用路由回退到 `/index.html`。
+
+仓库根目录的 `cloudbase-static-upload.zip` 是可直接上传的同一份静态发布包。
 
 不要在仓库或前端写入 CloudBase API Key、SecretId 或 SecretKey。普通云函数会以当前 CloudBase 环境身份访问数据库。
