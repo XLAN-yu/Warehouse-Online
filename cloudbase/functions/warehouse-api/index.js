@@ -22,16 +22,21 @@ const nonNegative = (value) => Number.isInteger(Number(value)) && Number(value) 
 const money = (value) => Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value) * 100) : -1;
 const clientRole = (role) => ["owner", "admin", "operator"].includes(role) ? "admin" : "viewer";
 
-function identity(event, context) {
-  const info = (context && (context.USER_INFO || context.userInfo || context.user_info)) || (event && (event.USER_INFO || event.userInfo || event.user_info)) || {};
-  const id = text(info.uid || info.userId || info.user_id || info.openId || info.openid, 160);
+async function identity() {
+  // 身份由 CloudBase 运行时注入，不能信任前端传来的邮箱或 uid。
+  // getUserInfo 读取当前调用者的 uid；getEndUserInfo 再取得邮箱登录资料。
+  const auth = app.auth();
+  const basic = auth.getUserInfo();
+  const details = await auth.getEndUserInfo(basic.uid);
+  const info = details && details.userInfo ? details.userInfo : {};
+  const id = text(info.uid || basic.uid || info.userId || info.user_id, 160);
   const email = text(info.email || info.emailAddress || info.email_address, 160).toLowerCase();
   if (!id || !email) throw new Error("未读取到登录身份。请使用 CloudBase 邮箱账号登录后重试。");
   return { id, email, displayName: text(info.nickName || info.nickname || info.name || email.split("@")[0], 80) || "仓储台用户" };
 }
 
-async function currentUser(event, context) {
-  const person = identity(event, context); const ref = db.collection(USERS).doc(person.id); const found = await ref.get();
+async function currentUser() {
+  const person = await identity(); const ref = db.collection(USERS).doc(person.id); const found = await ref.get();
   if (found.data && found.data.length) {
     const saved = found.data[0]; const role = ROLES.has(saved.role) ? saved.role : "pending";
     await ref.update({ data: { email: person.email, displayName: person.displayName, lastSeenAt: now() } });
@@ -104,7 +109,7 @@ async function mutate(user, event) {
 exports.main = async (event = {}, context = {}) => {
   try {
     const action = text(event.action || "bootstrap", 40); if (action === "health") return { ok: true, environment: process.env.TCB_ENV || "current" };
-    const user = await currentUser(event, context); if (action === "set-role") { ensureOwner(user); const userId = text(event.userId, 160); const role = text(event.role, 20); if (!userId || !ROLES.has(role) || role === "owner") throw new Error("用户或角色参数无效。"); await db.collection(USERS).doc(userId).update({ data: { role, updatedAt: now(), updatedBy: user.id } }); return { ok: true, users: await users() }; }
+    const user = await currentUser(); if (action === "set-role") { ensureOwner(user); const userId = text(event.userId, 160); const role = text(event.role, 20); if (!userId || !ROLES.has(role) || role === "owner") throw new Error("用户或角色参数无效。"); await db.collection(USERS).doc(userId).update({ data: { role, updatedAt: now(), updatedBy: user.id } }); return { ok: true, users: await users() }; }
     const next = await state(); const allUsers = await users();
     if (action === "bootstrap" || action === "load") return { ok: true, currentUser: user, warehouseState: next, data: publicData(next, user, allUsers) };
     if (action === "backup") { ensureEditor(user); return { ok: true, format: "warehouse-cloudbase-backup", version: 1, createdAt: now(), createdBy: user.email, data: next }; }
