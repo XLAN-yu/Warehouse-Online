@@ -6,6 +6,8 @@ const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
 const OWNER_EMAIL = String(process.env.WAREHOUSE_OWNER_EMAIL || "1991412002@qq.com").trim().toLowerCase();
 const USER_COLLECTION = "warehouse_users";
+const STATE_COLLECTION = "warehouse_state";
+const STATE_DOCUMENT_ID = "main";
 
 const ROLES = new Set(["owner", "admin", "operator", "viewer", "pending"]);
 
@@ -40,6 +42,32 @@ async function getOrCreateUser(identity) {
   return { id: identity.uid, email: identity.email, displayName: identity.displayName, role };
 }
 
+function emptyWarehouseState() {
+  return {
+    schemaVersion: 1,
+    products: [], suppliers: [], documents: [], recipes: [],
+    statusDefinitions: [
+      { id: "normal", label: "正常供货", color: "#21875A" },
+      { id: "ordered", label: "补货已下单", color: "#B88900" },
+      { id: "price_changed", label: "价格有变动", color: "#C56A16" },
+      { id: "alternate", label: "启用替代供货", color: "#3377C8" },
+      { id: "paused", label: "暂停采购", color: "#C74C4C" },
+      { id: "pending_stocktake", label: "新增待盘点", color: "#655BC7", system: true },
+    ],
+    preferences: { productCodePrefix: "ZERO", outboundCostMethod: "weighted" },
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+}
+
+async function getOrCreateWarehouseState() {
+  const ref = db.collection(STATE_COLLECTION).doc(STATE_DOCUMENT_ID);
+  const result = await ref.get();
+  if (result.data && result.data.length) return result.data[0];
+  const state = { _id: STATE_DOCUMENT_ID, ...emptyWarehouseState() };
+  await ref.set({ data: state });
+  return state;
+}
+
 async function listUsers() {
   const result = await db.collection(USER_COLLECTION).limit(500).get();
   return (result.data || []).map((user) => ({
@@ -63,11 +91,17 @@ exports.main = async (event = {}, context = {}) => {
 
     const currentUser = await getOrCreateUser(identityFromContext(event, context));
     if (action === "bootstrap") {
+      const state = await getOrCreateWarehouseState();
       return {
         ok: true,
         currentUser,
         users: ["owner", "admin"].includes(currentUser.role) ? await listUsers() : [],
+        warehouseState: state,
       };
+    }
+
+    if (action === "load-state") {
+      return { ok: true, currentUser, warehouseState: await getOrCreateWarehouseState() };
     }
 
     if (action === "set-role") {

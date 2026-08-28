@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CloudbaseLogin } from "./CloudbaseLogin";
+import { signOutOfCloudbase } from "./cloudbase-client";
 
 type Role = "admin" | "viewer" | "guest" | "pending";
 type Page =
@@ -1357,6 +1359,7 @@ function BackupView({ data, onRefresh }: { data: AppData; onRefresh: (message: s
 }
 
 export function WarehouseApp() {
+  const [cloudbaseUser, setCloudbaseUser] = useState<{ id: string; email: string; displayName: string; role: string } | null>(null);
   const [data, setData] = useState<AppData | null>(null);
   const [page, setPage] = useState<Page>("home");
   const [loading, setLoading] = useState(true);
@@ -1531,6 +1534,8 @@ export function WarehouseApp() {
     if (next !== "inbound" && next !== "outbound") setEditing(null);
   }
 
+  if (!cloudbaseUser) return <CloudbaseLogin onSuccess={setCloudbaseUser} />;
+
   if (loading) return <main className="loading-screen"><div className="loading-mark"><span /><span /><span /></div><h1>仓储台</h1><p>正在核对库存数据…</p></main>;
   if (loadError || !data) return <main className="error-screen"><span>!</span><h1>暂时无法打开仓库</h1><p>{loadError}</p><button onClick={() => window.location.reload()}>重新加载</button></main>;
   const visibleNav = NAV_ITEMS.filter((item) => {
@@ -1552,7 +1557,7 @@ export function WarehouseApp() {
         <div className="brand"><span className="brand-box">仓</span><div><strong>仓储台</strong><small>库存管理系统</small></div></div>
         <div className="sidebar-undo-row"><button className="sidebar-undo" onClick={() => navigate("records")}><span>↶</span><div><strong>撤回上一步</strong><small>查看并撤销流水</small></div></button><button className="sidebar-more" title="查看可撤回的具体流水" aria-label="查看可撤回的具体流水" onClick={() => navigate("records")}>•••</button></div>
         <nav>{visibleNav.map((item) => <button key={item.page} className={page === item.page ? "active" : ""} onClick={() => navigate(item.page)}><span>{item.glyph}</span>{item.label}{item.page === "inventory" && data.products.filter((product) => product.current_stock <= product.min_stock).length > 0 && <em>{data.products.filter((product) => product.current_stock <= product.min_stock).length}</em>}</button>)}</nav>
-        <div className="sidebar-footer"><div className="user-mini"><span>{data.currentUser.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{data.currentUser.display_name}</strong><small>{data.currentUser.role === "admin" ? "管理员" : data.currentUser.role === "guest" ? "访客试用" : "查看者"}</small></div></div><div className={`system-state ${data.guest ? "demo" : ""}`}><i />{data.guest ? "演示数据 · 仅本机" : "真实数据已连接"}</div></div>
+        <div className="sidebar-footer"><div className="user-mini"><span>{cloudbaseUser.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{cloudbaseUser.displayName}</strong><small>{cloudbaseUser.role === "owner" ? "最高管理员" : cloudbaseUser.role === "admin" ? "管理员" : "待审批用户"}</small></div></div><div className="system-state"><i />CloudBase 身份已连接</div><button className="sidebar-signout" onClick={() => void signOutOfCloudbase().finally(() => setCloudbaseUser(null))}>退出登录</button></div>
       </aside>
       {navOpen && <button className="mobile-overlay" aria-label="关闭菜单" onClick={() => setNavOpen(false)} />}
       <section className="main-area">
