@@ -91,7 +91,12 @@ type AppData = {
   auditLogs: AuditLog[];
   statusDefinitions: StatusDefinition[];
   recipes: Recipe[];
+  preferences?: WarehousePreferences;
 };
+
+type CostMethod = "weighted" | "fifo" | "lastInbound";
+type WarehousePreferences = { productCodePrefix: string; outboundCostMethod: CostMethod };
+const DEFAULT_PREFERENCES: WarehousePreferences = { productCodePrefix: "ZERO", outboundCostMethod: "weighted" };
 
 type StatusDefinition = { id: string; label: string; color: string; system?: boolean };
 type RecipeComponent = { productId: string; quantity: number; shelfLocation: string; supplier: string; remark: string };
@@ -161,6 +166,7 @@ function withStatusDefinitions(data: AppData): AppData {
     ...data,
     statusDefinitions: Array.isArray(data.statusDefinitions) && data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS,
     recipes: Array.isArray(data.recipes) ? data.recipes : [],
+    preferences: { ...DEFAULT_PREFERENCES, ...(data.preferences ?? {}) },
   };
 }
 
@@ -306,6 +312,29 @@ function exportExcel(
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
+  const encode = (value: string | number) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const blob = new Blob(["\ufeff", rows.map((row) => row.map(encode).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url; anchor.download = filename; anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = []; let cell = ""; let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"') { if (quoted && text[index + 1] === '"') { cell += '"'; index += 1; } else quoted = !quoted; }
+    else if (character === "," && !quoted) { row.push(cell.trim()); cell = ""; }
+    else if ((character === "\n" || character === "\r") && !quoted) { if (character === "\r" && text[index + 1] === "\n") index += 1; row.push(cell.trim()); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; }
+    else cell += character;
+  }
+  row.push(cell.trim()); if (row.some(Boolean)) rows.push(row);
+  return rows;
 }
 
 function StatusBadge({ status, definitions }: { status: string; definitions: StatusDefinition[] }) {
@@ -597,6 +626,8 @@ function DocumentForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showOcr, setShowOcr] = useState(false);
+  const costMethod = data.preferences?.outboundCostMethod ?? "weighted";
+  const costMethodLabel = costMethod === "fifo" ? "先进先出" : costMethod === "lastInbound" ? "最近入库价" : "移动加权平均";
 
   useEffect(() => {
     setLines(firstLines());
@@ -667,7 +698,7 @@ function DocumentForm({
       };
       const result = data.currentUser.role === "guest"
         ? await onGuestDocument(requestPayload)
-        : await apiPost({ action: "create-document", ...requestPayload, revisionOf: editing?.id });
+        : await apiPost({ action: "create-document", ...requestPayload, costMethod, revisionOf: editing?.id });
       setLines([{ key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "", remark: "" }]);
       setPurpose(""); setSupplier(""); setReference(""); setCustomer(""); setContact(""); setRemark("");
       await onSaved(`${editing ? "单据已修改" : type === "inbound" ? "入库成功" : "出库成功"}：${String(result.documentNo)}`);
@@ -697,7 +728,7 @@ function DocumentForm({
               <div className="line-product"><small>{String(index + 1).padStart(2, "0")}</small><ProductAutocomplete products={data.products} value={line.productId} onChange={(productId) => updateLine(line.key, { productId })} /></div>
               <div className={`stock-cell ${product && Number(line.quantity) > product.current_stock && type === "outbound" ? "danger" : ""}`}>{product ? <><b>{product.current_stock}</b><small>{product.unit}</small></> : "—"}</div>
               <label className="number-input"><input inputMode="numeric" min="1" step="1" value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} placeholder="0" /><span>{product?.unit ?? "件"}</span></label>
-              {type === "inbound" ? <label className="number-input price-input"><span>¥</span><input inputMode="decimal" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} placeholder="0.00" /></label> : <div className="cost-rule"><strong>移动平均价</strong>{data.currentUser.role !== "viewer" && product ? <small>当前 {money(product.average_cost_cents)}</small> : <small>提交时自动计算</small>}</div>}
+              {type === "inbound" ? <label className="number-input price-input"><span>¥</span><input inputMode="decimal" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} placeholder="0.00" /></label> : <div className="cost-rule"><strong>{costMethodLabel}</strong>{data.currentUser.role !== "viewer" && product ? <small>当前 {money(product.average_cost_cents)}</small> : <small>提交时自动计算</small>}</div>}
               <input className="line-remark" value={line.remark} onChange={(event) => updateLine(line.key, { remark: event.target.value })} placeholder="选填备注" />
               <button type="button" className="remove-line" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}>×</button>
             </div>;
@@ -711,7 +742,7 @@ function DocumentForm({
   );
 }
 
-function InventoryView({ data, onOpenProduct, onStartStocktake }: { data: AppData; onOpenProduct: (productId: string) => void; onStartStocktake: (productId: string) => void }) {
+function InventoryView({ data, onOpenProduct, onStartStocktake, onNavigate }: { data: AppData; onOpenProduct: (productId: string) => void; onStartStocktake: (productId: string) => void; onNavigate: (page: Page) => void }) {
   const [query, setQuery] = useState("");
   const [groupBySupplier, setGroupBySupplier] = useState(() => typeof window !== "undefined" && localStorage.getItem("warehouse-inventory-group-by-supplier") === "true");
   const [selectedSupplier, setSelectedSupplier] = useState<string | null>(null);
@@ -728,7 +759,7 @@ function InventoryView({ data, onOpenProduct, onStartStocktake }: { data: AppDat
   }
   return (
     <div className="page-stack">
-      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">实时库存</p><h1>{selectedSupplier ?? "查看库存"}</h1><p>{selectedSupplier ? `该供应商下共有 ${source.length} 种库存商品。` : `当前共有 ${data.products.length} 种库存商品。`}</p></div><div className="heading-stats"><span><small>商品种类</small><b>{data.products.length}</b></span><span><small>库存总数</small><b>{data.products.reduce((sum, item) => sum + item.current_stock, 0)}</b></span></div></section>
+      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">实时库存</p><h1>{selectedSupplier ?? "查看库存"}</h1><p>{selectedSupplier ? `该供应商下共有 ${source.length} 种库存商品。` : `当前共有 ${data.products.length} 种库存商品。`}</p></div><div className="inventory-actions"><button className="export-button" onClick={() => exportExcel(filtered, data.documents, data.currentUser.role !== "viewer", `库存清单-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出库存</button><button className="secondary-button" onClick={() => onNavigate("stocktake")}>库存盘点</button><button className="secondary-button" onClick={() => onNavigate("reports")}>库存报表</button></div></section>
       <section className="panel data-panel">
         <div className="table-toolbar inventory-toolbar"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button>{(!groupBySupplier || selectedSupplier) && <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索品名、编号或供应商" /></label>}<span className="result-count">{groupBySupplier && !selectedSupplier ? `共 ${data.products.length} 种库存商品，按默认供应商分类` : `${filtered.length} 条结果`}</span></div>
         {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list inventory-supplier-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><div><strong>{supplier}</strong></div><span><small>库存商品</small><b>{products.length} 种 · {products.reduce((total, product) => total + product.current_stock, 0)} 件</b></span></button>)}</div> : filtered.length ? <div className={`data-table inventory-table ${data.currentUser.role === "viewer" ? "viewer" : ""}`}>
@@ -773,7 +804,7 @@ function ReplenishmentView({ data }: { data: AppData }) {
     .filter((product) => product.current_stock <= product.min_stock)
     .sort((a, b) => a.current_stock - b.current_stock);
   return <div className="page-stack">
-    <section className="page-heading"><div><p className="eyebrow">采购辅助</p><h1>补货提醒</h1><p>库存低于或等于最低库存时提醒；采购数量由你按实际需要决定。</p></div><div className="heading-stats"><span><small>待补货商品</small><b>{suggestions.length}</b></span></div></section>
+    <section className="page-heading"><div><p className="eyebrow">采购辅助</p><h1>补货提醒</h1><p>库存低于或等于最低库存时提醒；采购数量由你按实际需要决定。</p></div><div className="inventory-actions"><span className="heading-number">待补货 {suggestions.length} 种</span><button className="export-button" onClick={() => exportExcel(suggestions, [], data.currentUser.role !== "viewer", `待补货清单-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出待补货清单</button></div></section>
     <section className="panel data-panel">
       {suggestions.length ? <div className="data-table replenishment-table"><div className="table-head"><span>商品信息</span><span>默认供应商</span><span>供货状态</span><span>当前库存</span><span>最低库存</span><span>提醒</span></div>{suggestions.map((product) => <div className="table-row" key={product.id}><div className="product-identity"><span>{product.name.slice(0, 1)}</span><div><strong>{product.name}</strong><small>{product.code} · {product.unit}</small></div></div><div>{product.default_supplier_name ?? "—"}</div><div><StatusBadge status={product.status} definitions={data.statusDefinitions} /></div><div className="quantity-cell"><strong>{product.current_stock}</strong><small>{product.unit}</small></div><div>{product.min_stock} {product.unit}</div><div className="replenish-quantity">需要补货</div></div>)}</div> : <EmptyState title="当前无需补货" detail="所有商品均高于最低库存。" />}
     </section>
@@ -904,6 +935,7 @@ function RecordsView({
 
 function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [query, setQuery] = useState("");
   const [savingId, setSavingId] = useState("");
   const [groupBySupplier, setGroupBySupplier] = useState(() => typeof window !== "undefined" && localStorage.getItem("warehouse-products-group-by-supplier") === "true");
@@ -929,7 +961,7 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
   const displayed = selectedSupplier ? (grouped[selectedSupplier] ?? []) : filtered;
   return (
     <div className="page-stack">
-      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">{selectedSupplier ? "供应商商品资料" : "商品主数据"}</p><h1>{selectedSupplier ?? "商品资料"}</h1><p>{selectedSupplier ? `该供应商下共 ${displayed.length} 种商品。` : "编号可人工填写或由系统生成；默认供应商可随时调整。"}</p></div><div className="heading-stats product-heading-actions"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></div></section>
+      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">{selectedSupplier ? "供应商商品资料" : "商品主数据"}</p><h1>{selectedSupplier ?? "商品资料"}</h1><p>{selectedSupplier ? `该供应商下共 ${displayed.length} 种商品。` : "编号可人工填写或由系统生成；默认供应商可随时调整。"}</p></div><div className="heading-stats product-heading-actions"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button><button className="secondary-button" onClick={() => downloadCsv("仓储台-商品导入模板.csv", [["商品编号", "商品名称", "默认供应商", "供货状态", "最低库存", "初始库存", "单位"], ["", "示例商品", "", "正常供货", "0", "0", "件"]])}>下载导入模板</button><button className="export-button" onClick={() => setShowImport(true)}>Excel 批量导入</button><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></div></section>
       <section className="panel data-panel">
         {!selectedSupplier && <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品" /></label><span className="result-count">{filtered.length} 种商品</span></div>}
         {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list product-supplier-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><strong>{supplier}</strong><span><small>商品种类</small><b>{products.length} 种</b></span></button>)}</div> : displayed.length ? <div className="data-table product-master-table"><div className="table-head"><span>商品编号</span><span>商品名称</span><span>默认供应商</span><span>状态</span><span>最低库存</span><span>操作</span></div>{displayed.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.supplier !== (product.default_supplier_name ?? ""); return <div className="table-row product-master-main" key={product.id}>
@@ -939,30 +971,58 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
           <button className="save-inline" disabled={!changed || savingId === product.id} onClick={() => void saveProduct(product)}>{savingId === product.id ? "保存中" : "保存"}</button>
         </div>; })}<datalist id="supplier-options-product">{data.suppliers.map((supplier) => <option value={supplier.name} key={supplier.id} />)}</datalist></div> : <EmptyState title={selectedSupplier ? "该供应商暂无商品" : "还没有商品资料"} detail={selectedSupplier ? "请返回供应商分类后选择其他供应商。" : "新增第一个商品后即可开始入库。"} />}
       </section>
-      {showCreate && <CreateProductModal suppliers={data.suppliers} statusDefinitions={data.statusDefinitions} onClose={() => setShowCreate(false)} onCreated={async (message) => { setShowCreate(false); await onRefresh(message); }} />}
+      {showCreate && <CreateProductModal suppliers={data.suppliers} statusDefinitions={data.statusDefinitions} preferences={data.preferences ?? DEFAULT_PREFERENCES} onClose={() => setShowCreate(false)} onCreated={async (message) => { setShowCreate(false); await onRefresh(message); }} />}
+      {showImport && <ProductImportDialog onClose={() => setShowImport(false)} onImported={async (message) => { setShowImport(false); await onRefresh(message); }} />}
     </div>
   );
 }
 
-function CreateProductModal({ suppliers, statusDefinitions, onClose, onCreated }: { suppliers: Supplier[]; statusDefinitions: StatusDefinition[]; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
+function CreateProductModal({ suppliers, statusDefinitions, preferences, onClose, onCreated }: { suppliers: Supplier[]; statusDefinitions: StatusDefinition[]; preferences: WarehousePreferences; onClose: () => void; onCreated: (message: string) => Promise<void> }) {
   const [form, setForm] = useState({ codeMode: "auto", code: "", name: "", unit: "件", minStock: "0", initialStock: "0", status: statusDefinitions.find((item) => item.id === "normal")?.id ?? statusDefinitions[0]?.id ?? "normal", defaultSupplier: "", alternates: "" });
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); setError("");
-    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", unit: form.unit, minStock: Number(form.minStock), initialStock: Number(form.initialStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
+    try { const result = await apiPost({ action: "add-product", name: form.name, code: form.codeMode === "manual" ? form.code : "", codePrefix: preferences.productCodePrefix, unit: form.unit, minStock: Number(form.minStock), initialStock: Number(form.initialStock), status: form.status, defaultSupplierName: form.defaultSupplier, alternateSuppliers: form.alternates.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }); await onCreated(`商品已建立：${form.name}（${String(result.code)}）`); }
     catch (submitError) { setError(submitError instanceof Error ? submitError.message : "新增失败。"); }
     finally { setSaving(false); }
   }
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="modal-card product-modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">商品主数据</p><h2>新增商品</h2></div><button type="button" className="close-button" onClick={onClose}>×</button></div>
-    <div className="code-mode"><button type="button" className={form.codeMode === "auto" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "auto" })}><b>系统生成</b><span>例如 ZERO-000001</span></button><button type="button" className={form.codeMode === "manual" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "manual" })}><b>人工填写</b><span>重复编号会被拦截</span></button></div>
+    <div className="code-mode"><button type="button" className={form.codeMode === "auto" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "auto" })}><b>系统生成</b><span>例如 {(preferences.productCodePrefix ? `${preferences.productCodePrefix}-` : "")}000001</span></button><button type="button" className={form.codeMode === "manual" ? "active" : ""} onClick={() => setForm({ ...form, codeMode: "manual" })}><b>人工填写</b><span>重复编号会被拦截</span></button></div>
     <div className="modal-form-grid">{form.codeMode === "manual" && <label><span>商品编号</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="例如 WL-2026-001" /></label>}<label className={form.codeMode === "auto" ? "wide" : ""}><span>商品名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="输入品名" /></label><label><span>默认供应商</span><input list="new-product-suppliers" value={form.defaultSupplier} onChange={(event) => setForm({ ...form, defaultSupplier: event.target.value })} placeholder="选择或新建" /></label><label><span>供应状态</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{statusDefinitions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><label><span>最低库存</span><input required type="number" min="0" step="1" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label><label><span>初始库存</span><input required type="number" min="0" step="1" value={form.initialStock} onChange={(event) => setForm({ ...form, initialStock: event.target.value })} /></label><label className="wide"><span>单位</span><input required value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="wide"><span>替代供应商 <em>多个名称用逗号分隔</em></span><input value={form.alternates} onChange={(event) => setForm({ ...form, alternates: event.target.value })} placeholder="例如：华东备选供应、同城急送" /></label><datalist id="new-product-suppliers">{suppliers.map((item) => <option value={item.name} key={item.id} />)}</datalist></div>
     {error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving}>{saving ? "正在保存…" : "建立商品"}</button></div>
   </form></div>;
 }
 
+function ProductImportDialog({ onClose, onImported }: { onClose: () => void; onImported: (message: string) => Promise<void> }) {
+  const [rows, setRows] = useState<Array<Record<string, string>>>([]);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function read(file: File) {
+    if (!/\.csv$/i.test(file.name)) return setError("在线版可直接导入下载模板生成的 CSV 文件；请在 Excel 中另存为 CSV UTF-8 后重试。");
+    const raw = parseCsv(await file.text());
+    const headers = raw.shift()?.map((value) => value.replace(/^\ufeff/, "")) ?? [];
+    const required = ["商品名称", "最低库存", "初始库存"];
+    if (!required.every((name) => headers.includes(name))) return setError("模板列不完整，请使用“下载导入模板”生成的文件。");
+    const parsed = raw.map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]))).filter((row) => row["商品名称"]);
+    if (!parsed.length) return setError("没有读取到商品资料。");
+    setRows(parsed); setError("");
+  }
+  async function submit() {
+    if (!rows.length) return setError("请先选择导入文件。");
+    setSaving(true); setError("");
+    try {
+      for (const row of rows) await apiPost({ action: "add-product", code: row["商品编号"], name: row["商品名称"], defaultSupplierName: row["默认供应商"], statusLabel: row["供货状态"], minStock: Number(row["最低库存"] || 0), initialStock: Number(row["初始库存"] || 0), unit: row["单位"] || "件" });
+      await onImported(`已导入 ${rows.length} 种商品。`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败，请检查数据。"); }
+    finally { setSaving(false); }
+  }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>商品资料批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择 Excel 导出的 CSV 文件</strong><small>导入前会显示识别到的商品数量；已有编号会被拦截，不会覆盖原商品。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行商品资料，确认后开始新增。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认批量导入"}</button></div></div></div>;
+}
+
 function RecipesView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
   const [selectedId, setSelectedId] = useState("");
   const [showEditor, setShowEditor] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [busy, setBusy] = useState(false);
   const selected = data.recipes.find((item) => item.id === selectedId);
   const canEdit = data.currentUser.role === "admin";
@@ -1000,10 +1060,43 @@ function RecipesView({ data, onRefresh }: { data: AppData; onRefresh: (message: 
   }
 
   return <div className="page-stack">
-    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button>}</section>
+    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <div className="product-heading-actions"><button className="secondary-button" onClick={() => downloadCsv("仓储台-产品配方模板.csv", [["产品名称", "配件品类", "每件用量", "货架位置（选填）", "供应商（选填）", "备注（选填）"], ["示例产品", "示例配件", "1", "", "", ""]])}>下载配料模板</button><button className="export-button" onClick={() => setShowImport(true)}>导入产品配方</button><button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button></div>}</section>
     <section className="panel recipe-list">{data.recipes.length ? data.recipes.map((recipe) => <button key={recipe.id} onClick={() => setSelectedId(recipe.id)}><strong>{recipe.name}</strong><span><small>配件种类</small><b>{recipe.components.length} 种</b></span><span><small>可下单</small><b>{maximum(recipe)} 件</b></span></button>) : <EmptyState title="还没有产品配方" detail={canEdit ? "新增产品配方后，即可按配方一键扣减配件库存。" : "请由管理员新增产品配方。"} />}</section>
     {showEditor && <RecipeEditor products={data.products} onClose={() => setShowEditor(false)} onSave={save} />}
+    {showImport && <RecipeImportDialog data={data} onClose={() => setShowImport(false)} onImported={async (message) => { setShowImport(false); await onRefresh(message); }} />}
   </div>;
+}
+
+function RecipeImportDialog({ data, onClose, onImported }: { data: AppData; onClose: () => void; onImported: (message: string) => Promise<void> }) {
+  const [rows, setRows] = useState<Array<Record<string, string>>>([]);
+  const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
+  async function read(file: File) {
+    if (!/\.csv$/i.test(file.name)) return setError("在线版可直接导入下载模板生成的 CSV 文件；请在 Excel 中另存为 CSV UTF-8 后重试。");
+    const raw = parseCsv(await file.text()); const headers = raw.shift()?.map((value) => value.replace(/^\ufeff/, "")) ?? [];
+    if (!["产品名称", "配件品类", "每件用量"].every((header) => headers.includes(header))) return setError("模板列不完整，请重新下载配料模板。");
+    const parsed = raw.map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]))).filter((row) => row["产品名称"] || row["配件品类"]);
+    if (!parsed.length || parsed.some((row) => !row["产品名称"] || !row["配件品类"] || !Number.isInteger(Number(row["每件用量"])) || Number(row["每件用量"]) < 1)) return setError("每一行都必须填写产品名称、配件品类和正整数每件用量。");
+    setRows(parsed); setError("");
+  }
+  async function submit() {
+    if (!rows.length) return; setSaving(true); setError("");
+    try {
+      let latest = withStatusDefinitions(await (await fetch("/api/warehouse", { cache: "no-store" })).json() as AppData);
+      const known = new Map(latest.products.map((product) => [product.name.trim(), product]));
+      for (const name of [...new Set(rows.map((row) => row["配件品类"].trim()))]) {
+        if (!known.has(name)) await apiPost({ action: "add-product", name, unit: "件", minStock: 0, initialStock: 0, status: "pending_stocktake", defaultSupplierName: rows.find((row) => row["配件品类"].trim() === name)?.["供应商（选填）"] ?? "", codePrefix: latest.preferences?.productCodePrefix ?? "ZERO" });
+      }
+      latest = withStatusDefinitions(await (await fetch("/api/warehouse", { cache: "no-store" })).json() as AppData);
+      const byName = new Map(latest.products.map((product) => [product.name.trim(), product]));
+      const imported = new Map<string, Recipe>();
+      for (const row of rows) { const name = row["产品名称"].trim(); const recipe = imported.get(name) ?? { id: crypto.randomUUID(), name, components: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; const product = byName.get(row["配件品类"].trim()); if (!product) throw new Error(`找不到配件：${row["配件品类"]}`); recipe.components.push({ productId: product.id, quantity: Number(row["每件用量"]), shelfLocation: row["货架位置（选填）"] ?? "", supplier: row["供应商（选填）"] ?? "", remark: row["备注（选填）"] ?? "" }); imported.set(name, recipe); }
+      const retained = latest.recipes.filter((recipe) => !imported.has(recipe.name));
+      await apiPost({ action: "save-recipes", recipes: [...retained, ...imported.values()] });
+      await onImported(`已导入 ${imported.size} 个产品配方。`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败，请检查内容。"); }
+    finally { setSaving(false); }
+  }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>产品配方批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择配方 CSV 文件</strong><small>库存中没有的配件会自动新增，并标为“新增待盘点”。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行配件资料，确认后导入。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认导入配方"}</button></div></div></div>;
 }
 
 function RecipeOrderControl({ disabled, onOrder }: { disabled: boolean; onOrder: (quantity: number) => Promise<void> }) {
@@ -1028,12 +1121,27 @@ function RecipeEditor({ products, recipe, onClose, onSave }: { products: Product
 
 function SettingsView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
   const [definitions, setDefinitions] = useState<StatusDefinition[]>(data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS);
+  const [fontScale, setFontScale] = useState(() => typeof window === "undefined" ? "1" : localStorage.getItem("warehouse-online-font-scale") ?? "1");
+  const [preferences, setPreferences] = useState<WarehousePreferences>(data.preferences ?? DEFAULT_PREFERENCES);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     setDefinitions(data.statusDefinitions.length ? data.statusDefinitions : DEFAULT_STATUS_DEFINITIONS);
+    setPreferences(data.preferences ?? DEFAULT_PREFERENCES);
   }, [data.statusDefinitions]);
+
+  function applyFontScale(value: string) {
+    setFontScale(value); localStorage.setItem("warehouse-online-font-scale", value);
+    document.documentElement.style.setProperty("--warehouse-font-scale", value);
+  }
+
+  async function savePreferences() {
+    setSaving(true); setError("");
+    try { await apiPost({ action: "save-preferences", preferences }); await onRefresh("编号前缀和出库计价方式已保存。"); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败，请重试。"); }
+    finally { setSaving(false); }
+  }
 
   function update(id: string, patch: Partial<StatusDefinition>) {
     setDefinitions((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -1065,6 +1173,7 @@ function SettingsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
 
   return <div className="page-stack">
     <section className="page-heading"><div><p className="eyebrow">业务规则</p><h1>设置</h1><p>可按业务需要新增、改名或移除商品状态，并为每种状态选择提示颜色。</p></div></section>
+    <section className="panel settings-panel preference-panel"><div className="panel-heading"><div><p className="eyebrow">显示与计算</p><h2>全局显示、编号和出库计价</h2></div></div><div className="preference-grid"><div><b>全局字体大小</b><p>只调整右侧业务页面，左侧工具栏宽度保持不变。</p><div className="font-scale-options">{[["1", "标准", "100%"], ["1.2", "较大", "120%"], ["1.5", "特大", "150%"]].map(([value, label, note]) => <button key={value} className={fontScale === value ? "active" : ""} onClick={() => applyFontScale(value)}><strong>{label}</strong><span>{note}</span></button>)}</div></div><label><b>商品编号前缀</b><p>影响以后自动生成的商品编号；留空则不使用前缀。</p><input value={preferences.productCodePrefix} maxLength={20} onChange={(event) => setPreferences({ ...preferences, productCodePrefix: event.target.value })} placeholder="例如 ZERO" /><small>下一个编号示例：{preferences.productCodePrefix ? `${preferences.productCodePrefix}-` : ""}000001</small></label><div><b>出库计价方式</b><p>选择后，之后新建的出库单按该规则记录成本。</p><div className="cost-method-options">{[["weighted", "移动加权平均"], ["fifo", "先进先出"], ["lastInbound", "最近入库价"]].map(([value, label]) => <button key={value} className={preferences.outboundCostMethod === value ? "active" : ""} onClick={() => setPreferences({ ...preferences, outboundCostMethod: value as CostMethod })}>{label}</button>)}</div></div></div><div className="settings-actions"><button className="primary-button" disabled={saving} onClick={() => void savePreferences()}>{saving ? "正在保存…" : "保存显示与计价设置"}</button></div></section>
     <section className="panel settings-panel">
       <div className="panel-heading"><div><p className="eyebrow">商品状态</p><h2>状态与颜色</h2></div><button className="secondary-button" onClick={add}>＋ 新增状态</button></div>
       <div className="status-settings-list">
@@ -1336,6 +1445,11 @@ export function WarehouseApp() {
   }, [refresh]);
 
   useEffect(() => {
+    const scale = localStorage.getItem("warehouse-online-font-scale") ?? "1";
+    document.documentElement.style.setProperty("--warehouse-font-scale", scale);
+  }, []);
+
+  useEffect(() => {
     if (!data || data.currentUser.role !== "admin") return;
     const last = localStorage.getItem("warehouse-last-local-backup");
     const due = !last || Date.now() - new Date(last).getTime() >= 7 * 24 * 60 * 60 * 1000;
@@ -1391,7 +1505,7 @@ export function WarehouseApp() {
           })()}
           {page === "inbound" && <DocumentForm key={`in-${editing?.id || prefillProductId || "new"}`} type="inbound" data={data} editing={editing} initialProductId={prefillProductId} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); setPrefillProductId(""); navigate("records"); }} onSaved={completeAction} />}
           {page === "outbound" && <DocumentForm key={`out-${editing?.id || prefillProductId || "new"}`} type="outbound" data={data} editing={editing} initialProductId={prefillProductId} onGuestDocument={simulateGuestDocument} onCancelEdit={() => { setEditing(null); setPrefillProductId(""); navigate("records"); }} onSaved={completeAction} />}
-          {page === "inventory" && <InventoryView data={data} onOpenProduct={openProductHistory} onStartStocktake={startStocktake} />}
+          {page === "inventory" && <InventoryView data={data} onOpenProduct={openProductHistory} onStartStocktake={startStocktake} onNavigate={navigate} />}
           {page === "replenishment" && <ReplenishmentView data={data} />}
           {page === "stocktake" && <StocktakeView data={data} initialProductId={stocktakeProductId} onSaved={async (message) => { setStocktakeProductId(""); if (data.guest) showToast(message); else await refresh(message); navigate("home"); }} onGuestStocktake={simulateGuestStocktake} />}
           {page === "reports" && <ReportsView data={data} />}

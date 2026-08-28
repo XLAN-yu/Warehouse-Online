@@ -8,6 +8,9 @@ type DocumentType = "inbound" | "outbound" | "stocktake";
 type StatusDefinition = { id: string; label: string; color: string; system?: boolean };
 type RecipeComponent = { productId: string; quantity: number; shelfLocation: string; supplier: string; remark: string };
 type Recipe = { id: string; name: string; components: RecipeComponent[]; createdAt: string; updatedAt: string };
+type CostMethod = "weighted" | "fifo" | "lastInbound";
+type WarehousePreferences = { productCodePrefix: string; outboundCostMethod: CostMethod };
+const DEFAULT_PREFERENCES: WarehousePreferences = { productCodePrefix: "ZERO", outboundCostMethod: "weighted" };
 
 const DEFAULT_STATUS_DEFINITIONS: StatusDefinition[] = [
   { id: "normal", label: "正常供货", color: "#21875A" },
@@ -81,6 +84,16 @@ async function listRecipes() {
   const row = await getDatabase().prepare("SELECT value FROM system_settings WHERE key = 'product_recipes'").first<{ value: string }>();
   try { return normalizeRecipes(row ? JSON.parse(row.value) : null); }
   catch { return []; }
+}
+
+async function listPreferences(): Promise<WarehousePreferences> {
+  const row = await getDatabase().prepare("SELECT value FROM system_settings WHERE key = 'warehouse_preferences'").first<{ value: string }>();
+  try {
+    const value = JSON.parse(row?.value ?? "{}") as Partial<WarehousePreferences>;
+    const productCodePrefix = cleanText(value.productCodePrefix, 20).replace(/[^\u4e00-\u9fffA-Za-z0-9_-]/g, "");
+    const outboundCostMethod: CostMethod = ["weighted", "fifo", "lastInbound"].includes(String(value.outboundCostMethod)) ? value.outboundCostMethod as CostMethod : "weighted";
+    return { productCodePrefix, outboundCostMethod };
+  } catch { return { ...DEFAULT_PREFERENCES }; }
 }
 
 type CurrentUser = {
@@ -311,13 +324,15 @@ async function resolveSupplier(name: string) {
   return row?.id ?? null;
 }
 
-async function nextProductCode() {
+async function nextProductCode(prefix = "ZERO") {
   const db = getDatabase();
-  const row = await db
-    .prepare("SELECT code FROM products WHERE code GLOB 'ZERO-[0-9]*' ORDER BY code DESC LIMIT 1")
-    .first<{ code: string }>();
-  const current = row?.code ? Number(row.code.replace("ZERO-", "")) || 0 : 0;
-  return `ZERO-${String(current + 1).padStart(6, "0")}`;
+  const rows = await db.prepare("SELECT code FROM products").all<{ code: string }>();
+  const marker = prefix ? `${prefix}-` : "";
+  const current = rows.results.reduce((largest, row) => {
+    const numeric = marker && !row.code.startsWith(marker) ? Number.NaN : Number(row.code.slice(marker.length));
+    return Number.isInteger(numeric) ? Math.max(largest, numeric) : largest;
+  }, 0);
+  return `${marker}${String(current + 1).padStart(6, "0")}`;
 }
 
 function documentNumber(type: DocumentType) {
@@ -387,7 +402,7 @@ function replayInventory(documents: ReplayDocument[], products: ProductRow[]) {
         itemUpdates.push({
           id: item.id,
           quantity: item.quantity,
-          unitCost: state.averageCost,
+          unitCost: item.unit_cost_cents || state.averageCost,
           before,
           after,
         });
@@ -421,7 +436,7 @@ async function nextInventoryRevision() {
 
 async function listBootstrap(user: CurrentUser) {
   const db = getDatabase();
-  const [productResult, supplierResult, documentResult, itemResult, userResult, auditResult, statusDefinitions, recipes] =
+  const [productResult, supplierResult, documentResult, itemResult, userResult, auditResult, statusDefinitions, recipes, preferences] =
     await Promise.all([
       db
         .prepare(
@@ -454,6 +469,7 @@ async function listBootstrap(user: CurrentUser) {
         : Promise.resolve({ results: [] }),
       listStatusDefinitions(),
       listRecipes(),
+      listPreferences(),
     ]);
 
   const itemsByDocument = new Map<string, StoredItem[]>();
@@ -487,6 +503,7 @@ async function listBootstrap(user: CurrentUser) {
     auditLogs: auditResult.results,
     statusDefinitions,
     recipes,
+    preferences,
     backupPolicy: { intervalDays: 7, retentionDays: 30, location: "local-folder" },
   };
 }
@@ -546,6 +563,7 @@ async function createOrReplaceDocument(
     if (original.type !== type) throw new Error("修改时不能改变入库或出库类型。");
   }
 
+  const replayDocuments = await loadReplayDocuments(revisionOf ?? undefined);
   const supplierName = cleanText(payload.supplierName, 100);
   const supplierId = type === "inbound" ? await resolveSupplier(supplierName) : null;
   const timestamp = nowIso();
@@ -567,9 +585,22 @@ async function createOrReplaceDocument(
     updated_at: timestamp,
     items,
   };
+  if (type === "outbound") {
+    const requested = cleanText(payload.costMethod, 30);
+    const preferences = await listPreferences();
+    const method: CostMethod = ["weighted", "fifo", "lastInbound"].includes(requested) ? requested as CostMethod : preferences.outboundCostMethod;
+    const ordered = [...replayDocuments].sort((a, b) => a.effective_at.localeCompare(b.effective_at) || a.created_at.localeCompare(b.created_at));
+    for (const item of document.items) {
+      const product = productsResult.results.find((entry) => entry.id === item.product_id)!;
+      if (method === "weighted") item.unit_cost_cents = product.average_cost_cents ?? 0;
+      else {
+        const candidates = ordered.flatMap((entry) => entry.type === "inbound" ? entry.items.filter((line) => line.product_id === item.product_id) : []);
+        const picked = method === "lastInbound" ? candidates.at(-1) : candidates[0];
+        item.unit_cost_cents = picked?.unit_price_cents ?? product.average_cost_cents ?? 0;
+      }
+    }
+  }
   for (const item of items) item.document_id = document.id;
-
-  const replayDocuments = await loadReplayDocuments(revisionOf ?? undefined);
   replayDocuments.push(document);
   const replay = replayInventory(replayDocuments, productsResult.results);
   const revision = await nextInventoryRevision();
@@ -823,7 +854,9 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
   const name = cleanText(payload.name, 100);
   if (!name) throw new Error("请填写商品名称。");
   const manualCode = cleanText(payload.code, 40).toUpperCase();
-  const code = manualCode || (await nextProductCode());
+  const requestedPrefix = cleanText(payload.codePrefix, 20).replace(/[^\u4e00-\u9fffA-Za-z0-9_-]/g, "");
+  const preferences = await listPreferences();
+  const code = manualCode || (await nextProductCode(requestedPrefix || preferences.productCodePrefix));
   const unit = cleanText(payload.unit, 16) || "件";
   const minStock = nonNegativeInteger(payload.minStock);
   if (minStock < 0) throw new Error("最低库存必须是大于或等于 0 的整数。");
@@ -839,7 +872,8 @@ async function addProduct(user: CurrentUser, payload: Record<string, unknown>) {
   const id = crypto.randomUUID();
   const timestamp = nowIso();
   const requestedStatus = cleanText(payload.status, 40);
-  const status = statusDefinitions.some((item) => item.id === requestedStatus) ? requestedStatus : "normal";
+  const requestedLabel = cleanText(payload.statusLabel, 40);
+  const status = statusDefinitions.find((item) => item.id === requestedStatus || item.label === requestedLabel)?.id ?? "normal";
   const statements = [
     db
       .prepare(
@@ -1013,6 +1047,21 @@ async function saveStatusDefinitions(user: CurrentUser, payload: Record<string, 
   return { statusDefinitions: definitions };
 }
 
+async function savePreferences(user: CurrentUser, payload: Record<string, unknown>) {
+  requireAdmin(user);
+  const source = (payload.preferences ?? {}) as Partial<WarehousePreferences>;
+  const productCodePrefix = cleanText(source.productCodePrefix, 20).replace(/[^\u4e00-\u9fffA-Za-z0-9_-]/g, "");
+  if (String(source.productCodePrefix ?? "").trim() && !productCodePrefix) throw new Error("商品编号前缀只能包含中文、英文、数字、下划线或连字符。");
+  const outboundCostMethod: CostMethod = ["weighted", "fifo", "lastInbound"].includes(String(source.outboundCostMethod)) ? source.outboundCostMethod as CostMethod : "weighted";
+  const preferences = { productCodePrefix, outboundCostMethod };
+  const timestamp = nowIso(); const db = getDatabase();
+  await db.batch([
+    db.prepare("INSERT INTO system_settings (key, value, updated_at) VALUES ('warehouse_preferences', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").bind(JSON.stringify(preferences), timestamp),
+    db.prepare("INSERT INTO audit_logs (id, entity_type, entity_id, action, before_json, after_json, operator_user_id, created_at) VALUES (?, 'settings', 'warehouse_preferences', 'update', '', ?, ?, ?)").bind(crypto.randomUUID(), JSON.stringify(preferences), user.id, timestamp),
+  ]);
+  return { preferences };
+}
+
 async function saveRecipes(user: CurrentUser, payload: Record<string, unknown>) {
   requireAdmin(user);
   const supplied = Array.isArray(payload.recipes) ? payload.recipes : [];
@@ -1155,6 +1204,7 @@ export async function POST(request: Request) {
     else if (action === "create-document") result = await createOrReplaceDocument(user, payload);
     else if (action === "stocktake") result = await createStocktake(user, payload);
     else if (action === "save-status-definitions") result = await saveStatusDefinitions(user, payload);
+    else if (action === "save-preferences") result = await savePreferences(user, payload);
     else if (action === "save-recipes") result = await saveRecipes(user, payload);
     else if (action === "order-recipe") result = await orderRecipe(user, payload);
     else if (action === "void-document") {
