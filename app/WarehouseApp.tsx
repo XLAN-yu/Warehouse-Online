@@ -323,6 +323,11 @@ function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
   URL.revokeObjectURL(url);
 }
 
+function downloadTemplate(filename: string) {
+  const anchor = document.createElement("a");
+  anchor.href = `/templates/${encodeURIComponent(filename)}`; anchor.download = filename; anchor.click();
+}
+
 function parseCsv(text: string) {
   const rows: string[][] = [];
   let row: string[] = []; let cell = ""; let quoted = false;
@@ -335,6 +340,33 @@ function parseCsv(text: string) {
   }
   row.push(cell.trim()); if (row.some(Boolean)) rows.push(row);
   return rows;
+}
+
+type FflateWindow = Window & { fflate?: { unzipSync: (bytes: Uint8Array) => Record<string, Uint8Array> } };
+let fflateLoader: Promise<void> | null = null;
+async function loadFflate() {
+  if ((window as FflateWindow).fflate) return;
+  fflateLoader ??= new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "/fflate.min.js"; script.onload = () => resolve(); script.onerror = () => reject(new Error("Excel 解析组件加载失败。")); document.head.appendChild(script); });
+  await fflateLoader;
+}
+function xmlText(value: string) { return value.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code))); }
+function columnIndex(reference: string) { return reference.split("").reduce((result, character) => result * 26 + character.charCodeAt(0) - 64, 0) - 1; }
+async function parseXlsxRows(file: File, sheetNumber: number) {
+  await loadFflate();
+  const files = (window as FflateWindow).fflate!.unzipSync(new Uint8Array(await file.arrayBuffer()));
+  const decode = (path: string) => files[path] ? new TextDecoder().decode(files[path]) : "";
+  const shared = [...decode("xl/sharedStrings.xml").matchAll(/<si>([\s\S]*?)<\/si>/g)].map((entry) => xmlText(entry[1]));
+  const worksheet = decode(`xl/worksheets/sheet${sheetNumber}.xml`);
+  if (!worksheet) throw new Error("未找到模板数据页，请使用下载的仓储台模板。");
+  return [...worksheet.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)].map((entry) => {
+    const values: string[] = [];
+    for (const cell of entry[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const ref = /r="([A-Z]+)\d+"/.exec(cell[1])?.[1]; if (!ref) continue;
+      const raw = /<v>([\s\S]*?)<\/v>/.exec(cell[2])?.[1] ?? /<t[^>]*>([\s\S]*?)<\/t>/.exec(cell[2])?.[1] ?? "";
+      const sharedIndex = /t="s"/.test(cell[1]); values[columnIndex(ref)] = sharedIndex ? (shared[Number(raw)] ?? "") : xmlText(raw);
+    }
+    return values;
+  }).filter((row) => row.some(Boolean));
 }
 
 function StatusBadge({ status, definitions }: { status: string; definitions: StatusDefinition[] }) {
@@ -716,10 +748,10 @@ function DocumentForm({
         {type === "inbound" && <button className="ocr-button" onClick={() => setShowOcr(true)}><span>▣</span><div><strong>图片识别填单</strong><small>截图自动提取</small></div></button>}
       </section>
       <form className="panel document-form" onSubmit={submit}>
-        <div className="form-section-heading"><div><span>01</span><div><h2>单据信息</h2><p>操作人将自动记录为 {data.currentUser.display_name}</p></div></div>{editing && <button type="button" className="text-button" onClick={onCancelEdit}>退出修改</button>}</div>
+        <div className="form-section-heading document-info-heading"><div><span>02</span><div><h2>单据信息</h2><p>操作人将自动记录为 {data.currentUser.display_name}</p></div></div>{editing && <button type="button" className="text-button" onClick={onCancelEdit}>退出修改</button>}</div>
         {type === "inbound" ? <details className="document-details"><summary><span><b>供应商信息</b><small>选填 · 点击展开</small></span><b aria-hidden="true">⌄</b></summary><div className="document-meta-grid inbound"><label><span>本次实际供应商</span><input list="supplier-options" value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="选择或输入供应商" /><datalist id="supplier-options">{data.suppliers.map((item) => <option key={item.id} value={item.name} />)}</datalist></label><label><span>供应商单号 <em>选填</em></span><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="送货单号或订单号" /></label></div></details> : <><div className="document-meta-grid outbound"><label><span>客户 <em>选填</em></span><input value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder="客户名称" /></label><label><span>联系方式 <em>选填</em></span><input value={contact} onChange={(event) => setContact(event.target.value)} placeholder="电话或联系人" /></label></div><details className="document-details"><summary><span><b>用途及备注</b><small>选填 · 点击展开</small></span><b aria-hidden="true">⌄</b></summary><div className="document-meta-grid outbound"><label><span>用途</span><input value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="例如：生产领用 / 客户发货" /></label><label><span>单据备注 <em>选填</em></span><input value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="补充说明" /></label></div></details></>}
         <div className="form-divider" />
-        <div className="form-section-heading"><div><span>02</span><div><h2>商品明细</h2><p>输入部分品名或编号即可联想查找</p></div></div><button type="button" className="small-add-button" onClick={() => setLines((current) => [...current, { key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "", remark: "" }])}>＋ 添加一行</button></div>
+        <div className="form-section-heading product-lines-heading"><div><span>01</span><div><h2>商品明细</h2><p>输入部分品名或编号即可联想查找</p></div></div><button type="button" className="small-add-button" onClick={() => setLines((current) => [...current, { key: crypto.randomUUID(), productId: "", quantity: "", unitPrice: "", remark: "" }])}>＋ 添加一行</button></div>
         <div className="line-table">
           <div className={`line-head ${type}`}><span>商品</span><span>当前库存</span><span>数量</span>{type === "inbound" ? <span>实际单价</span> : <span>计价方式</span>}<span>备注</span><span /> </div>
           {lines.map((line, index) => {
@@ -759,7 +791,8 @@ function InventoryView({ data, onOpenProduct, onStartStocktake, onNavigate }: { 
   }
   return (
     <div className="page-stack">
-      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">实时库存</p><h1>{selectedSupplier ?? "查看库存"}</h1><p>{selectedSupplier ? `该供应商下共有 ${source.length} 种库存商品。` : `当前共有 ${data.products.length} 种库存商品。`}</p></div><div className="inventory-actions"><button className="export-button" onClick={() => exportExcel(filtered, data.documents, data.currentUser.role !== "viewer", `库存清单-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出库存</button><button className="secondary-button" onClick={() => onNavigate("stocktake")}>库存盘点</button><button className="secondary-button" onClick={() => onNavigate("reports")}>库存报表</button></div></section>
+      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">实时库存</p><h1>{selectedSupplier ?? "查看库存"}</h1><p>{selectedSupplier ? `该供应商下共有 ${source.length} 种库存商品。` : `当前共有 ${data.products.length} 种库存商品。`}</p></div><div className="inventory-actions"><button className="export-button" onClick={() => exportExcel(filtered, data.documents, data.currentUser.role !== "viewer", `库存清单-${new Date().toISOString().slice(0, 10)}.xls`, data.statusDefinitions)}>⇩ 导出 Excel</button></div></section>
+      {!selectedSupplier && <section className="inventory-shortcuts"><button onClick={() => onNavigate("stocktake")}><span>✓</span><strong>库存盘点</strong><i>→</i></button><button onClick={() => onNavigate("reports")}><span>▤</span><strong>库存报表</strong><i>→</i></button></section>}
       <section className="panel data-panel">
         <div className="table-toolbar inventory-toolbar"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button>{(!groupBySupplier || selectedSupplier) && <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索品名、编号或供应商" /></label>}<span className="result-count">{groupBySupplier && !selectedSupplier ? `共 ${data.products.length} 种库存商品，按默认供应商分类` : `${filtered.length} 条结果`}</span></div>
         {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list inventory-supplier-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><div><strong>{supplier}</strong></div><span><small>库存商品</small><b>{products.length} 种 · {products.reduce((total, product) => total + product.current_stock, 0)} 件</b></span></button>)}</div> : filtered.length ? <div className={`data-table inventory-table ${data.currentUser.role === "viewer" ? "viewer" : ""}`}>
@@ -961,7 +994,7 @@ function ProductsView({ data, onRefresh }: { data: AppData; onRefresh: (message:
   const displayed = selectedSupplier ? (grouped[selectedSupplier] ?? []) : filtered;
   return (
     <div className="page-stack">
-      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">{selectedSupplier ? "供应商商品资料" : "商品主数据"}</p><h1>{selectedSupplier ?? "商品资料"}</h1><p>{selectedSupplier ? `该供应商下共 ${displayed.length} 种商品。` : "编号可人工填写或由系统生成；默认供应商可随时调整。"}</p></div><div className="heading-stats product-heading-actions"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button><button className="secondary-button" onClick={() => downloadCsv("仓储台-商品导入模板.csv", [["商品编号", "商品名称", "默认供应商", "供货状态", "最低库存", "初始库存", "单位"], ["", "示例商品", "", "正常供货", "0", "0", "件"]])}>下载导入模板</button><button className="export-button" onClick={() => setShowImport(true)}>Excel 批量导入</button><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></div></section>
+      <section className="page-heading"><div>{selectedSupplier && <button className="secondary-button product-back" onClick={() => setSelectedSupplier(null)}>← 返回供应商分类</button>}<p className="eyebrow">{selectedSupplier ? "供应商商品资料" : "商品主数据"}</p><h1>{selectedSupplier ?? "商品资料"}</h1><p>{selectedSupplier ? `该供应商下共 ${displayed.length} 种商品。` : "编号可人工填写或由系统生成；默认供应商可随时调整。"}</p></div><div className="heading-stats product-heading-actions"><button className={`secondary-button ${groupBySupplier ? "active-toggle" : ""}`} onClick={toggleGrouping}>按供应商分类：{groupBySupplier ? "已开启" : "已关闭"}</button><button className="secondary-button" onClick={() => downloadTemplate("仓储台-商品批量导入模板.xlsx")}>下载导入模板</button><button className="import-button" onClick={() => setShowImport(true)}>Excel 批量导入</button><button className="primary-button" onClick={() => setShowCreate(true)}>＋ 新增商品</button></div></section>
       <section className="panel data-panel">
         {!selectedSupplier && <div className="table-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品" /></label><span className="result-count">{filtered.length} 种商品</span></div>}
         {groupBySupplier && !selectedSupplier ? <div className="supplier-group-list product-supplier-list">{Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b, "zh-CN")).map(([supplier, products]) => <button className="supplier-group-card" key={supplier} onClick={() => setSelectedSupplier(supplier)}><strong>{supplier}</strong><span><small>商品种类</small><b>{products.length} 种</b></span></button>)}</div> : displayed.length ? <div className="data-table product-master-table"><div className="table-head"><span>商品编号</span><span>商品名称</span><span>默认供应商</span><span>状态</span><span>最低库存</span><span>操作</span></div>{displayed.map((product) => { const values = draft(product); const changed = values.status !== product.status || values.minStock !== String(product.min_stock) || values.supplier !== (product.default_supplier_name ?? ""); return <div className="table-row product-master-main" key={product.id}>
@@ -998,8 +1031,8 @@ function ProductImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   async function read(file: File) {
-    if (!/\.csv$/i.test(file.name)) return setError("在线版可直接导入下载模板生成的 CSV 文件；请在 Excel 中另存为 CSV UTF-8 后重试。");
-    const raw = parseCsv(await file.text());
+    const raw = /\.xlsx$/i.test(file.name) ? await parseXlsxRows(file, 2) : /\.csv$/i.test(file.name) ? parseCsv(await file.text()) : [];
+    if (!raw.length) return setError("请选择商品导入模板的 .xlsx 或 CSV 文件。");
     const headers = raw.shift()?.map((value) => value.replace(/^\ufeff/, "")) ?? [];
     const required = ["商品名称", "最低库存", "初始库存"];
     if (!required.every((name) => headers.includes(name))) return setError("模板列不完整，请使用“下载导入模板”生成的文件。");
@@ -1011,12 +1044,12 @@ function ProductImportDialog({ onClose, onImported }: { onClose: () => void; onI
     if (!rows.length) return setError("请先选择导入文件。");
     setSaving(true); setError("");
     try {
-      for (const row of rows) await apiPost({ action: "add-product", code: row["商品编号"], name: row["商品名称"], defaultSupplierName: row["默认供应商"], statusLabel: row["供货状态"], minStock: Number(row["最低库存"] || 0), initialStock: Number(row["初始库存"] || 0), unit: row["单位"] || "件" });
+      for (const row of rows) await apiPost({ action: "add-product", code: row["商品编号"], name: row["商品名称"], defaultSupplierName: row["默认供应商"], statusLabel: row["供货状态"] || row["供应状态"], minStock: Number(row["最低库存"] || 0), initialStock: Number(row["期初库存"] || row["初始库存"] || 0), unit: row["单位"] || "件" });
       await onImported(`已导入 ${rows.length} 种商品。`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败，请检查数据。"); }
     finally { setSaving(false); }
   }
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>商品资料批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择 Excel 导出的 CSV 文件</strong><small>导入前会显示识别到的商品数量；已有编号会被拦截，不会覆盖原商品。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行商品资料，确认后开始新增。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认批量导入"}</button></div></div></div>;
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>商品资料批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择商品批量导入模板</strong><small>支持离线版同款 XLSX 模板；已有编号会被拦截，不会覆盖原商品。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行商品资料，确认后开始新增。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认批量导入"}</button></div></div></div>;
 }
 
 function RecipesView({ data, onRefresh }: { data: AppData; onRefresh: (message: string) => Promise<void> }) {
@@ -1060,7 +1093,7 @@ function RecipesView({ data, onRefresh }: { data: AppData; onRefresh: (message: 
   }
 
   return <div className="page-stack">
-    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <div className="product-heading-actions"><button className="secondary-button" onClick={() => downloadCsv("仓储台-产品配方模板.csv", [["产品名称", "配件品类", "每件用量", "货架位置（选填）", "供应商（选填）", "备注（选填）"], ["示例产品", "示例配件", "1", "", "", ""]])}>下载配料模板</button><button className="export-button" onClick={() => setShowImport(true)}>导入产品配方</button><button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button></div>}</section>
+    <section className="page-heading"><div><p className="eyebrow">产品配方 · 自动扣料</p><h1>一键配料</h1><p>一个产品对应一份配方；下单时按每件用量自动扣减全部配件库存。</p></div>{canEdit && <div className="product-heading-actions"><button className="secondary-button" onClick={() => downloadTemplate("仓储台-一键配料导入模板.xlsx")}>下载配料模板</button><button className="import-button" onClick={() => setShowImport(true)}>导入产品配方</button><button className="primary-button" onClick={() => setShowEditor(true)}>＋ 新增产品配方</button></div>}</section>
     <section className="panel recipe-list">{data.recipes.length ? data.recipes.map((recipe) => <button key={recipe.id} onClick={() => setSelectedId(recipe.id)}><strong>{recipe.name}</strong><span><small>配件种类</small><b>{recipe.components.length} 种</b></span><span><small>可下单</small><b>{maximum(recipe)} 件</b></span></button>) : <EmptyState title="还没有产品配方" detail={canEdit ? "新增产品配方后，即可按配方一键扣减配件库存。" : "请由管理员新增产品配方。"} />}</section>
     {showEditor && <RecipeEditor products={data.products} onClose={() => setShowEditor(false)} onSave={save} />}
     {showImport && <RecipeImportDialog data={data} onClose={() => setShowImport(false)} onImported={async (message) => { setShowImport(false); await onRefresh(message); }} />}
@@ -1071,10 +1104,14 @@ function RecipeImportDialog({ data, onClose, onImported }: { data: AppData; onCl
   const [rows, setRows] = useState<Array<Record<string, string>>>([]);
   const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
   async function read(file: File) {
-    if (!/\.csv$/i.test(file.name)) return setError("在线版可直接导入下载模板生成的 CSV 文件；请在 Excel 中另存为 CSV UTF-8 后重试。");
-    const raw = parseCsv(await file.text()); const headers = raw.shift()?.map((value) => value.replace(/^\ufeff/, "")) ?? [];
-    if (!["产品名称", "配件品类", "每件用量"].every((header) => headers.includes(header))) return setError("模板列不完整，请重新下载配料模板。");
-    const parsed = raw.map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]))).filter((row) => row["产品名称"] || row["配件品类"]);
+    const isXlsx = /\.xlsx$/i.test(file.name);
+    const raw = isXlsx ? await parseXlsxRows(file, 2) : /\.csv$/i.test(file.name) ? parseCsv(await file.text()) : [];
+    if (!raw.length) return setError("请选择配料导入模板的 .xlsx 或 CSV 文件。");
+    const headers = raw.shift()?.map((value) => value.replace(/^\ufeff/, "")) ?? [];
+    const productName = isXlsx ? (raw[2]?.[7] ?? "").trim() : "";
+    if (isXlsx) raw.splice(2, 1);
+    if (!["配件品类", "每件用量"].every((header) => headers.includes(header)) || (!isXlsx && !headers.includes("产品名称")) || (isXlsx && !productName)) return setError("模板内容不完整，请在配方导入页右侧第 4 行填写产品名称。");
+    const parsed = raw.map((cells) => ({ ...Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""])), 产品名称: isXlsx ? productName : cells[headers.indexOf("产品名称")] ?? "" })).filter((row) => row["产品名称"] || row["配件品类"]);
     if (!parsed.length || parsed.some((row) => !row["产品名称"] || !row["配件品类"] || !Number.isInteger(Number(row["每件用量"])) || Number(row["每件用量"]) < 1)) return setError("每一行都必须填写产品名称、配件品类和正整数每件用量。");
     setRows(parsed); setError("");
   }
@@ -1096,7 +1133,7 @@ function RecipeImportDialog({ data, onClose, onImported }: { data: AppData; onCl
     } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败，请检查内容。"); }
     finally { setSaving(false); }
   }
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>产品配方批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择配方 CSV 文件</strong><small>库存中没有的配件会自动新增，并标为“新增待盘点”。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行配件资料，确认后导入。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认导入配方"}</button></div></div></div>;
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal-card import-dialog"><div className="modal-heading"><div><p className="eyebrow">导入前检查</p><h2>产品配方批量导入</h2></div><button className="close-button" onClick={onClose}>×</button></div><label className="upload-zone"><input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void read(file); }} /><strong>选择一键配料导入模板</strong><small>支持离线版同款 XLSX 模板；库存中没有的配件会自动新增并待盘点。</small></label>{rows.length > 0 && <div className="import-preview-note">已检查 {rows.length} 行配件资料，确认后导入。</div>}{error && <div className="form-error"><span>!</span>{error}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !rows.length} onClick={() => void submit()}>{saving ? "正在导入…" : "确认导入配方"}</button></div></div></div>;
 }
 
 function RecipeOrderControl({ disabled, onOrder }: { disabled: boolean; onOrder: (quantity: number) => Promise<void> }) {
@@ -1488,7 +1525,7 @@ export function WarehouseApp() {
     <main className="app-shell">
       <aside className={navOpen ? "open" : ""}>
         <div className="brand"><span className="brand-box">仓</span><div><strong>仓储台</strong><small>库存管理系统</small></div></div>
-        <button className="sidebar-undo" onClick={() => navigate("records")}><span>↶</span><div><strong>撤回上一步</strong><small>查看并撤销流水</small></div></button>
+        <div className="sidebar-undo-row"><button className="sidebar-undo" onClick={() => navigate("records")}><span>↶</span><div><strong>撤回上一步</strong><small>查看并撤销流水</small></div></button><button className="sidebar-more" title="查看可撤回的具体流水" aria-label="查看可撤回的具体流水" onClick={() => navigate("records")}>•••</button></div>
         <nav>{visibleNav.map((item) => <button key={item.page} className={page === item.page ? "active" : ""} onClick={() => navigate(item.page)}><span>{item.glyph}</span>{item.label}{item.page === "inventory" && data.products.filter((product) => product.current_stock <= product.min_stock).length > 0 && <em>{data.products.filter((product) => product.current_stock <= product.min_stock).length}</em>}</button>)}</nav>
         <div className="sidebar-footer"><div className="user-mini"><span>{data.currentUser.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{data.currentUser.display_name}</strong><small>{data.currentUser.role === "admin" ? "管理员" : data.currentUser.role === "guest" ? "访客试用" : "查看者"}</small></div></div><div className={`system-state ${data.guest ? "demo" : ""}`}><i />{data.guest ? "演示数据 · 仅本机" : "真实数据已连接"}</div></div>
       </aside>
