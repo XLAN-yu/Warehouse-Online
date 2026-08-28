@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CloudbaseLogin } from "./CloudbaseLogin";
-import { signOutOfCloudbase } from "./cloudbase-client";
+import { cloudbaseApi, loadCloudbaseWarehouse, signOutOfCloudbase } from "./cloudbase-client";
 
 type Role = "admin" | "viewer" | "guest" | "pending";
 type Page =
@@ -224,14 +224,7 @@ function pageTitle(page: Page) {
 }
 
 async function apiPost(body: Record<string, unknown>) {
-  const response = await fetch("/api/warehouse", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await response.json()) as { error?: string } & Record<string, unknown>;
-  if (!response.ok) throw new Error(data.error || "提交失败，请重试。");
-  return data;
+  return cloudbaseApi(body);
 }
 
 function escapeXml(value: unknown) {
@@ -1145,12 +1138,12 @@ function RecipeImportDialog({ data, onClose, onImported }: { data: AppData; onCl
   async function submit() {
     if (!rows.length) return; setSaving(true); setError("");
     try {
-      let latest = withStatusDefinitions(await (await fetch("/api/warehouse", { cache: "no-store" })).json() as AppData);
+      let latest = withStatusDefinitions(await loadCloudbaseWarehouse() as AppData);
       const known = new Map(latest.products.map((product) => [product.name.trim(), product]));
       for (const name of [...new Set(rows.map((row) => row["配件品类"].trim()))]) {
         if (!known.has(name)) await apiPost({ action: "add-product", name, unit: "件", minStock: 0, initialStock: 0, status: "pending_stocktake", defaultSupplierName: rows.find((row) => row["配件品类"].trim() === name)?.["供应商（选填）"] ?? "", codePrefix: latest.preferences?.productCodePrefix ?? "ZERO" });
       }
-      latest = withStatusDefinitions(await (await fetch("/api/warehouse", { cache: "no-store" })).json() as AppData);
+      latest = withStatusDefinitions(await loadCloudbaseWarehouse() as AppData);
       const byName = new Map(latest.products.map((product) => [product.name.trim(), product]));
       const imported = new Map<string, Recipe>();
       for (const row of rows) { const name = row["产品名称"].trim(); const recipe = imported.get(name) ?? { id: crypto.randomUUID(), name, components: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; const product = byName.get(row["配件品类"].trim()); if (!product) throw new Error(`找不到配件：${row["配件品类"]}`); recipe.components.push({ productId: product.id, quantity: Number(row["每件用量"]), shelfLocation: row["货架位置（选填）"] ?? "", supplier: row["供应商（选填）"] ?? "", remark: row["备注（选填）"] ?? "" }); imported.set(name, recipe); }
@@ -1294,10 +1287,7 @@ async function getDirectoryHandle() {
 }
 
 async function fetchBackup() {
-  const response = await fetch("/api/warehouse?view=backup");
-  const backup = await response.json();
-  if (!response.ok) throw new Error(backup.error || "生成备份失败。");
-  return backup;
+  return cloudbaseApi({ action: "backup" });
 }
 
 async function writeBackupToDirectory(handle: any, askPermission: boolean) {
@@ -1383,20 +1373,8 @@ export function WarehouseApp() {
   }, []);
 
   const refresh = useCallback(async (message?: string) => {
-    const response = await fetch("/api/warehouse", { cache: "no-store" });
-    const result = (await response.json()) as AppData & { error?: string };
-    if (!response.ok) throw new Error(result.error || "数据加载失败。");
-    if (result.guest) {
-      const stored = localStorage.getItem("warehouse-guest-demo-v1");
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored) as AppData;
-          if (parsed.guest && Array.isArray(parsed.products) && Array.isArray(parsed.documents)) {
-            setData(withStatusDefinitions({ ...parsed, pendingApproval: result.pendingApproval, currentUser: result.currentUser }));
-          } else setData(withStatusDefinitions(result));
-        } catch { setData(withStatusDefinitions(result)); }
-      } else setData(withStatusDefinitions(result));
-    } else setData(withStatusDefinitions(result));
+    const result = await loadCloudbaseWarehouse() as AppData;
+    setData(withStatusDefinitions(result));
     if (message) showToast(message);
   }, [showToast]);
 
@@ -1506,8 +1484,10 @@ export function WarehouseApp() {
   }
 
   useEffect(() => {
-    refresh().catch((error) => setLoadError(error instanceof Error ? error.message : "数据加载失败。" )).finally(() => setLoading(false));
-  }, [refresh]);
+    if (!cloudbaseUser) return;
+    setLoading(true);
+    refresh().catch((error) => setLoadError(error instanceof Error ? error.message : "数据加载失败." )).finally(() => setLoading(false));
+  }, [cloudbaseUser, refresh]);
 
   useEffect(() => {
     const scale = localStorage.getItem("warehouse-online-font-scale") ?? "1";

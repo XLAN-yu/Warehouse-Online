@@ -25,6 +25,18 @@ export async function cloudbaseBootstrap() {
   };
 }
 
+export async function cloudbaseApi(payload: Record<string, unknown>) {
+  const response = await getCloudbaseApp().callFunction({ name: "warehouse-api", data: payload, parse: true });
+  const result = response.result as Record<string, unknown> & { ok?: boolean; error?: string };
+  if (!result.ok) throw new Error(result.error || "云端仓库操作失败。");
+  return result;
+}
+
+export async function loadCloudbaseWarehouse() {
+  const result = await cloudbaseApi({ action: "load" });
+  return result.data;
+}
+
 export async function signInWithCloudbaseEmail(email: string, password: string) {
   await getCloudbaseApp().auth().signInWithEmailAndPassword({ email, password });
   const result = await cloudbaseBootstrap();
