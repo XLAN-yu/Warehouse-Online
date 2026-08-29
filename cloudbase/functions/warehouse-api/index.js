@@ -4,6 +4,8 @@ const cloudbase = require("@cloudbase/node-sdk");
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
 const OWNER_EMAIL = String(process.env.WAREHOUSE_OWNER_EMAIL || "1991412002@qq.com").trim().toLowerCase();
+// CloudBase 身份认证后台显示的“用户 ID”。可通过环境变量覆盖，避免依赖不可用的详情查询接口。
+const OWNER_UID = String(process.env.WAREHOUSE_OWNER_UID || "2093394525082103809").trim();
 const USERS = "warehouse_users";
 const STATE = "warehouse_state";
 const STATE_ID = "main";
@@ -33,25 +35,26 @@ async function ensureCollections() {
 
 async function identity() {
   // 身份由 CloudBase 运行时注入，不能信任前端传来的邮箱或 uid。
-  // getUserInfo 读取当前调用者的 uid；getEndUserInfo 再取得邮箱登录资料。
+  // 只使用运行时已注入的信息；部分环境的 getEndUserInfo 会返回 RESOURCE_NOT_FOUND。
   const auth = app.auth();
   const basic = auth.getUserInfo();
-  const details = await auth.getEndUserInfo(basic.uid);
-  const info = details && details.userInfo ? details.userInfo : {};
-  const id = text(info.uid || basic.uid || info.userId || info.user_id, 160);
-  const email = text(info.email || info.emailAddress || info.email_address, 160).toLowerCase();
-  if (!id || !email) throw new Error("未读取到登录身份。请使用 CloudBase 邮箱账号登录后重试。");
-  return { id, email, displayName: text(info.nickName || info.nickname || info.name || email.split("@")[0], 80) || "仓储台用户" };
+  const id = text(basic.uid || basic.userId || basic.user_id, 160);
+  if (!id) throw new Error("未读取到 CloudBase 登录身份，请重新登录后再试。");
+  const rawEmail = text(basic.email || basic.emailAddress || basic.email_address, 160).toLowerCase();
+  const email = rawEmail || (id === OWNER_UID ? OWNER_EMAIL : `${id}@cloudbase-user.local`);
+  const displayName = text(basic.username || basic.nickName || basic.nickname || basic.name || email.split("@")[0], 80) || "仓储台用户";
+  return { id, email, displayName };
 }
 
 async function currentUser() {
   const person = await identity(); const ref = db.collection(USERS).doc(person.id); const found = await ref.get();
   if (found.data && found.data.length) {
-    const saved = found.data[0]; const role = ROLES.has(saved.role) ? saved.role : "pending";
-    await ref.update({ data: { email: person.email, displayName: person.displayName, lastSeenAt: now() } });
+    const saved = found.data[0]; const isOwner = person.id === OWNER_UID || person.email === OWNER_EMAIL;
+    const role = isOwner ? "owner" : (ROLES.has(saved.role) ? saved.role : "pending");
+    await ref.update({ data: { email: person.email, displayName: person.displayName, role, lastSeenAt: now() } });
     return { ...person, role };
   }
-  const role = person.email === OWNER_EMAIL ? "owner" : "pending";
+  const role = person.id === OWNER_UID || person.email === OWNER_EMAIL ? "owner" : "pending";
   await ref.set({ data: { _id: person.id, ...person, role, createdAt: now(), lastSeenAt: now() } });
   return { ...person, role };
 }

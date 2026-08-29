@@ -54,7 +54,9 @@ export function CloudbaseLogin({ onSuccess }: { onSuccess: (user: CloudbaseUser)
     setError("");
     setSaving(true);
     try {
-      setVerifyOtp(await requestCloudbaseEmailCode(email.trim()));
+      // React 对函数形式的 state setter 会将其视为“更新器”；用外层函数保存 SDK 回调本身。
+      const callback = await requestCloudbaseEmailCode(email.trim());
+      setVerifyOtp(() => callback);
     } catch (reason) {
       setError(readableError(reason));
     } finally {
