@@ -2,7 +2,9 @@
 
 const cloudbase = require("@cloudbase/node-sdk");
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
-const db = app.rdb();
+// CloudBase RDB 默认会将环境 ID 当作 database/schema 名；本环境的 PostgreSQL
+// 实际业务 Schema 是控制台显示的 public，必须显式指定。
+const db = app.rdb({ database: "public" });
 const OWNER_EMAIL = String(process.env.WAREHOUSE_OWNER_EMAIL || "1991412002@qq.com").trim().toLowerCase();
 // CloudBase 身份认证后台显示的“用户 ID”。可通过环境变量覆盖，避免依赖不可用的详情查询接口。
 const OWNER_UID = String(process.env.WAREHOUSE_OWNER_UID || "2093394525082103809").trim();
