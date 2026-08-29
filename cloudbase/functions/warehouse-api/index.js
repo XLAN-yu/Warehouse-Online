@@ -30,7 +30,9 @@ const text = (value, max = 120) => typeof value === "string" ? value.trim().slic
 const positive = (value) => Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : -1;
 const nonNegative = (value) => Number.isInteger(Number(value)) && Number(value) >= 0 ? Number(value) : -1;
 const money = (value) => Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value) * 100) : -1;
-const clientRole = (role) => ["owner", "admin", "operator"].includes(role) ? "admin" : "viewer";
+// 新注册的协作用户默认可完成全部仓储业务；最高管理员仍独占用户权限管理。
+// 前端只区分“管理员操作界面”和“只读界面”，因此 pending 同样映射到操作界面。
+const clientRole = (role) => ["owner", "admin", "operator", "pending"].includes(role) ? "admin" : "viewer";
 
 async function rows(query, resource) {
   const result = await query;
@@ -74,7 +76,7 @@ async function state() {
 }
 async function saveState(next) { next.updatedAt = now(); await rows(db.from(STATE).update({ data: next, updated_at: now() }).eq("id", STATE_ID), "保存仓库数据失败"); }
 async function users() { return rows(db.from(USERS).select("*").limit(500), "读取用户列表失败"); }
-function ensureEditor(user) { if (!["owner", "admin", "operator"].includes(user.role)) throw new Error("你没有修改仓库数据的权限。"); }
+function ensureEditor(user) { if (!["owner", "admin", "operator", "pending"].includes(user.role)) throw new Error("你没有修改仓库数据的权限。"); }
 function ensureOwner(user) { if (user.role !== "owner") throw new Error("只有最高管理员可以管理管理员和用户角色。"); }
 function addLog(next, user, action, entityType, entityId) { next.auditLogs.unshift({ id: uuid(), entity_type: entityType, entity_id: entityId, action, created_at: now(), operator_user_id: user.id }); next.auditLogs = next.auditLogs.slice(0, 1500); }
 function publicData(next, user, allUsers) {
@@ -97,7 +99,10 @@ function rebuild(next) {
 function requireProduct(next, id) { const product = next.products.find((item) => item.id === id); if (!product) throw new Error("选择的商品不存在，请刷新后重试。"); return product; }
 
 async function mutate(user, event) {
-  ensureEditor(user); const next = await state(); const action = text(event.action, 40);
+  const action = text(event.action, 40);
+  // 恢复会直接覆盖全仓库的商品和单据，保留给最高管理员；其余日常仓储操作允许协作用户完成。
+  if (action === "restore-backup") ensureOwner(user);
+  ensureEditor(user); const next = await state();
   if (action === "add-product") {
     const name = text(event.name, 100); if (!name) throw new Error("请填写商品名称。"); const manual = text(event.code, 40).toUpperCase(); const prefix = text(event.codePrefix || next.preferences.productCodePrefix, 20).replace(/[^\u4e00-\u9fffA-Za-z0-9_-]/g, ""); const code = manual || nextCode(next, prefix);
     if (next.products.some((item) => item.code === code)) throw new Error(`商品编号 ${code} 已存在，请更换编号。`);
