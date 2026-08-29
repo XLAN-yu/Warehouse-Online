@@ -1,7 +1,13 @@
 "use strict";
 
 const cloudbase = require("@cloudbase/node-sdk");
-const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
+// 仅在云函数环境中使用的 Server API Key，会映射为 service_role 并绕过 RLS。
+// 它绝不能写入前端或返回给浏览器；浏览器仍须先登录，且本函数继续校验业务角色。
+const SERVER_API_KEY = String(process.env.CLOUDBASE_APIKEY || "").trim();
+const app = cloudbase.init({
+  env: cloudbase.SYMBOL_CURRENT_ENV,
+  ...(SERVER_API_KEY ? { accessKey: SERVER_API_KEY } : {}),
+});
 // CloudBase RDB 默认会将环境 ID 当作 database/schema 名；本环境的 PostgreSQL
 // 实际业务 Schema 是控制台显示的 public，必须显式指定。
 const db = app.rdb({ database: "public" });

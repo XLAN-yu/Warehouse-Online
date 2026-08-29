@@ -24,3 +24,10 @@ CREATE TABLE IF NOT EXISTS public.warehouse_state (
 -- 显式开启 RLS，避免以后误接入 REST API 时泄露仓储数据。
 ALTER TABLE public.warehouse_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.warehouse_state ENABLE ROW LEVEL SECURITY;
+
+-- 不向 anon / authenticated 授予表权限，也不创建 Policy。
+-- 数据仅由携带 Server API Key 的 warehouse-api 云函数访问；该函数再校验业务角色。
+REVOKE ALL ON TABLE public.warehouse_users FROM anon, authenticated;
+REVOKE ALL ON TABLE public.warehouse_state FROM anon, authenticated;
+DROP POLICY IF EXISTS warehouse_users_authenticated ON public.warehouse_users;
+DROP POLICY IF EXISTS warehouse_state_authenticated ON public.warehouse_state;
