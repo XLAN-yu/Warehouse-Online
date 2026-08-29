@@ -2,7 +2,7 @@
 
 const cloudbase = require("@cloudbase/node-sdk");
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
-const db = app.database();
+const db = app.rdb();
 const OWNER_EMAIL = String(process.env.WAREHOUSE_OWNER_EMAIL || "1991412002@qq.com").trim().toLowerCase();
 // CloudBase 身份认证后台显示的“用户 ID”。可通过环境变量覆盖，避免依赖不可用的详情查询接口。
 const OWNER_UID = String(process.env.WAREHOUSE_OWNER_UID || "2093394525082103809").trim();
@@ -15,7 +15,6 @@ const DEFAULT_STATUSES = [
   { id: "price_changed", label: "价格有变动", color: "#C56A16" }, { id: "alternate", label: "启用替代供货", color: "#3377C8" },
   { id: "paused", label: "暂停采购", color: "#C74C4C" }, { id: "pending_stocktake", label: "新增待盘点", color: "#655BC7", system: true },
 ];
-let databasePreparation;
 
 const now = () => new Date().toISOString();
 const uuid = () => (global.crypto && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -25,12 +24,10 @@ const nonNegative = (value) => Number.isInteger(Number(value)) && Number(value) 
 const money = (value) => Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value) * 100) : -1;
 const clientRole = (role) => ["owner", "admin", "operator"].includes(role) ? "admin" : "viewer";
 
-async function ensureCollections() {
-  // CloudBase 的空集合不能先读取；首次调用先幂等创建两个业务集合。
-  databasePreparation ??= Promise.all([USERS, STATE].map(async (name) => {
-    try { await db.createCollection(name); } catch { /* 已存在时控制台会返回错误，可安全忽略。 */ }
-  }));
-  await databasePreparation;
+async function rows(query, resource) {
+  const result = await query;
+  if (result.error) throw new Error(`${resource}：${result.error.message || "数据库操作失败"}`);
+  return result.data || [];
 }
 
 async function identity() {
@@ -47,15 +44,15 @@ async function identity() {
 }
 
 async function currentUser() {
-  const person = await identity(); const ref = db.collection(USERS).doc(person.id); const found = await ref.get();
-  if (found.data && found.data.length) {
-    const saved = found.data[0]; const isOwner = person.id === OWNER_UID || person.email === OWNER_EMAIL;
+  const person = await identity(); const found = await rows(db.from(USERS).select("*").eq("id", person.id), "读取用户角色失败");
+  if (found.length) {
+    const saved = found[0]; const isOwner = person.id === OWNER_UID || person.email === OWNER_EMAIL;
     const role = isOwner ? "owner" : (ROLES.has(saved.role) ? saved.role : "pending");
-    await ref.update({ data: { email: person.email, displayName: person.displayName, role, lastSeenAt: now() } });
+    await rows(db.from(USERS).update({ email: person.email, display_name: person.displayName, role, last_seen_at: now() }).eq("id", person.id), "更新用户角色失败");
     return { ...person, role };
   }
   const role = person.id === OWNER_UID || person.email === OWNER_EMAIL ? "owner" : "pending";
-  await ref.set({ data: { _id: person.id, ...person, role, createdAt: now(), lastSeenAt: now() } });
+  await rows(db.from(USERS).insert({ id: person.id, email: person.email, display_name: person.displayName, role, created_at: now(), last_seen_at: now() }), "创建用户角色失败");
   return { ...person, role };
 }
 
@@ -63,17 +60,17 @@ function emptyState() {
   return { _id: STATE_ID, schemaVersion: 1, products: [], suppliers: [], documents: [], recipes: [], auditLogs: [], statusDefinitions: DEFAULT_STATUSES, preferences: { productCodePrefix: "ZERO", outboundCostMethod: "weighted" }, createdAt: now(), updatedAt: now() };
 }
 async function state() {
-  const ref = db.collection(STATE).doc(STATE_ID); const found = await ref.get();
-  if (found.data && found.data.length) return found.data[0];
-  const created = emptyState(); await ref.set({ data: created }); return created;
+  const found = await rows(db.from(STATE).select("data").eq("id", STATE_ID), "读取仓库数据失败");
+  if (found.length && found[0].data) return found[0].data;
+  const created = emptyState(); await rows(db.from(STATE).insert({ id: STATE_ID, data: created, updated_at: now() }), "创建仓库数据失败"); return created;
 }
-async function saveState(next) { next.updatedAt = now(); await db.collection(STATE).doc(STATE_ID).set({ data: next }); }
-async function users() { const result = await db.collection(USERS).limit(500).get(); return result.data || []; }
+async function saveState(next) { next.updatedAt = now(); await rows(db.from(STATE).update({ data: next, updated_at: now() }).eq("id", STATE_ID), "保存仓库数据失败"); }
+async function users() { return rows(db.from(USERS).select("*").limit(500), "读取用户列表失败"); }
 function ensureEditor(user) { if (!["owner", "admin", "operator"].includes(user.role)) throw new Error("你没有修改仓库数据的权限。"); }
 function ensureOwner(user) { if (user.role !== "owner") throw new Error("只有最高管理员可以管理管理员和用户角色。"); }
 function addLog(next, user, action, entityType, entityId) { next.auditLogs.unshift({ id: uuid(), entity_type: entityType, entity_id: entityId, action, created_at: now(), operator_user_id: user.id }); next.auditLogs = next.auditLogs.slice(0, 1500); }
 function publicData(next, user, allUsers) {
-  return { currentUser: { id: user.id, email: user.email, display_name: user.displayName, role: clientRole(user.role) }, products: next.products || [], suppliers: next.suppliers || [], documents: next.documents || [], users: ["owner", "admin"].includes(user.role) ? allUsers.map((entry) => ({ id: entry._id || entry.id, email: entry.email, display_name: entry.displayName || entry.display_name || entry.email, role: clientRole(entry.role), last_seen_at: entry.lastSeenAt })) : [], auditLogs: next.auditLogs || [], statusDefinitions: next.statusDefinitions || DEFAULT_STATUSES, recipes: next.recipes || [], preferences: next.preferences || { productCodePrefix: "ZERO", outboundCostMethod: "weighted" } };
+  return { currentUser: { id: user.id, email: user.email, display_name: user.displayName, role: clientRole(user.role) }, products: next.products || [], suppliers: next.suppliers || [], documents: next.documents || [], users: ["owner", "admin"].includes(user.role) ? allUsers.map((entry) => ({ id: entry.id, email: entry.email, display_name: entry.display_name || entry.email, role: clientRole(entry.role), last_seen_at: entry.last_seen_at || entry.lastSeenAt })) : [], auditLogs: next.auditLogs || [], statusDefinitions: next.statusDefinitions || DEFAULT_STATUSES, recipes: next.recipes || [], preferences: next.preferences || { productCodePrefix: "ZERO", outboundCostMethod: "weighted" } };
 }
 function supplier(next, name) { const clean = text(name, 100); if (!clean) return null; let item = next.suppliers.find((entry) => entry.name === clean); if (!item) { item = { id: uuid(), name: clean }; next.suppliers.push(item); } return item; }
 function nextCode(next, prefix) { const numeric = (next.products || []).map((item) => Number((String(item.code).match(/(\d+)$/) || ["", "0"])[1])).reduce((max, value) => Math.max(max, value), 0) + 1; return `${prefix ? `${prefix}-` : ""}${String(numeric).padStart(6, "0")}`; }
@@ -121,8 +118,7 @@ async function mutate(user, event) {
 exports.main = async (event = {}, context = {}) => {
   try {
     const action = text(event.action || "bootstrap", 40); if (action === "health") return { ok: true, environment: process.env.TCB_ENV || "current" };
-    await ensureCollections();
-    const user = await currentUser(); if (action === "set-role") { ensureOwner(user); const userId = text(event.userId, 160); const role = text(event.role, 20); if (!userId || !ROLES.has(role) || role === "owner") throw new Error("用户或角色参数无效。"); await db.collection(USERS).doc(userId).update({ data: { role, updatedAt: now(), updatedBy: user.id } }); return { ok: true, users: await users() }; }
+    const user = await currentUser(); if (action === "set-role") { ensureOwner(user); const userId = text(event.userId, 160); const role = text(event.role, 20); if (!userId || !ROLES.has(role) || role === "owner") throw new Error("用户或角色参数无效。"); await rows(db.from(USERS).update({ role, updated_at: now(), updated_by: user.id }).eq("id", userId), "更新用户角色失败"); return { ok: true, users: await users() }; }
     const next = await state(); const allUsers = await users();
     if (action === "bootstrap" || action === "load") return { ok: true, currentUser: user, warehouseState: next, data: publicData(next, user, allUsers) };
     if (action === "backup") { ensureEditor(user); return { ok: true, format: "warehouse-cloudbase-backup", version: 1, createdAt: now(), createdBy: user.email, data: next }; }
