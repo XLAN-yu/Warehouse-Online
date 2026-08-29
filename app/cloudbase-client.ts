@@ -69,6 +69,47 @@ export async function verifyCloudbaseEmailCode(
   return completeCloudbaseSignIn();
 }
 
+export async function requestCloudbaseRegistrationCode(email: string) {
+  const response = await getCloudbaseApp().auth().getVerification({ email });
+  if (!response.verification_id) throw new Error("CloudBase 未返回注册验证码，请稍后重试。");
+  if (response.is_user) throw new Error("该邮箱已注册，请直接登录。");
+  return response.verification_id;
+}
+
+export async function registerCloudbaseUser({
+  email,
+  username,
+  password,
+  verificationId,
+  code,
+}: {
+  email: string;
+  username: string;
+  password: string;
+  verificationId: string;
+  code: string;
+}) {
+  const auth = getCloudbaseApp().auth();
+  const verified = await auth.verify({ verification_id: verificationId, verification_code: code });
+  if (!verified.verification_token) throw new Error("验证码校验失败，请重新获取验证码。");
+  const signedUp = await auth.signUp({
+    email,
+    verification_code: code,
+    verification_token: verified.verification_token,
+    password,
+    name: username,
+  });
+  if (signedUp.error) throw new Error(signedUp.error.message || "注册失败，请稍后重试。");
+
+  // CloudBase 要求先以邮箱完成验证后再绑定用户名，绑定完成后可使用“用户名密码”登录。
+  const usernameAuth = auth as unknown as {
+    isUsernameRegistered: (value: string) => Promise<boolean>;
+    currentUser: { updateUsername: (value: string) => Promise<void> };
+  };
+  if (!(await usernameAuth.isUsernameRegistered(username))) await usernameAuth.currentUser.updateUsername(username);
+  return completeCloudbaseSignIn();
+}
+
 export async function signOutOfCloudbase() {
   await getCloudbaseApp().auth().signOut();
 }
