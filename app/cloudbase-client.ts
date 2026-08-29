@@ -43,9 +43,9 @@ async function completeCloudbaseSignIn() {
   return result;
 }
 
-export async function signInWithCloudbaseUsername(username: string, password: string) {
-  // 与控制台已启用的“用户名密码”方式一致。
-  const signedIn = await getCloudbaseApp().auth().signInWithPassword({ username, password });
+export async function signInWithCloudbaseUsername(account: string, password: string) {
+  // CloudBase 的账号密码登录同时支持用户名和邮箱。
+  const signedIn = await getCloudbaseApp().auth().signInWithPassword(account.includes("@") ? { email: account, password } : { username: account, password });
   if (signedIn.error) {
     throw new Error(signedIn.error.message || "CloudBase 用户名登录失败。");
   }
@@ -84,7 +84,7 @@ export async function registerCloudbaseUser({
   code,
 }: {
   email: string;
-  username: string;
+  username?: string;
   password: string;
   verificationId: string;
   code: string;
@@ -97,7 +97,7 @@ export async function registerCloudbaseUser({
     verification_code: code,
     verification_token: verified.verification_token,
     password,
-    name: username,
+    name: username || email.split("@")[0],
   });
   if (signedUp.error) throw new Error(signedUp.error.message || "注册失败，请稍后重试。");
 
@@ -106,7 +106,7 @@ export async function registerCloudbaseUser({
     isUsernameRegistered: (value: string) => Promise<boolean>;
     currentUser: { updateUsername: (value: string) => Promise<void> };
   };
-  if (!(await usernameAuth.isUsernameRegistered(username))) await usernameAuth.currentUser.updateUsername(username);
+  if (username && !(await usernameAuth.isUsernameRegistered(username))) await usernameAuth.currentUser.updateUsername(username);
   return completeCloudbaseSignIn();
 }
 
